@@ -1,6 +1,5 @@
 from pathlib import Path
 import sys
-from types import GenericAlias
 from typing import Type, TypeVar, Union, get_args, get_origin
 from loguru import logger
 import orjson
@@ -65,7 +64,7 @@ def _orjson_default(obj):
 
 
 def resolve_type_arguments(
-    query_type: Type, target_type: Union[Type, GenericAlias]
+    query_type: Type, target_type: Type
 ) -> tuple[Union[Type, TypeVar], ...]:
     """
     FROM: https://stackoverflow.com/a/69862817

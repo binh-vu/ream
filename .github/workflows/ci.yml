@@ -5,13 +5,16 @@ on:
 
 jobs:
   build:
+    strategy:
+      matrix:
+        python: ["3.8", "3.9", "3.10"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - name: setup python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.8
+          python-version: ${{ matrix.python }}
       - name: setup dependencies
         run: |
           pip install poetry

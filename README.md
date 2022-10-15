@@ -4,8 +4,7 @@ A simple actor architecture for your research project.
 
 ## Introduction
 
-Let's say you are developing a method, an algorithm, or a pipeline to solve a problem. In many cases, it can be viewed as a computational graph. So why not structuring your code as a computational graph, where each node is a component in your method or a step in your pipeline? It made your code more modular, easy to release, to cache, and to evaluate.
-
+Let's say you are developing a method, an algorithm, or a pipeline to solve a problem. In many cases, it can be viewed as a computational graph. So why not structure your code as a computational graph, where each node is a component in your method or a step in your pipeline? It made your code more modular, and easy to release, cache, and evaluate.
 To see how we can apply this architecture, let's take a look at a record linkage project (linking entities in a table). A record linkage system typically has the following steps:
 
 1. Generate candidate entities in a table
@@ -47,7 +46,7 @@ class CandidateRanking(BaseActor[pd.DataFrame, CanRankParams]):
         ...
 ```
 
-The two actors made your code be more modular and closer to releasable quality. To define the linking pipeline, use `ActorGraph`
+The two actors make the code more modular and closer to releasable quality. To define the linking pipeline, we can use `ActorGraph`:
 
 ````python
 from ream.prelude import ActorGraph, ActorNode, ActorEdge
@@ -65,7 +64,7 @@ if __name__ == "__main__":
     g.run(actor_class="CandidateGeneration", actor_method="evaluate")
 ```
 
-The `evaluate` method for each actor can be very useful. On the candidate generation actor, it can tell us the upperbound accuracy of our method so we know whether we need to improve the candidate generation or candidate ranking. If an dataset actor is introduced to the computational graph as demonstrated below, its evaluate method can tell us statistics about the dataset.
+The `evaluate` method for each actor can be very useful. On the candidate generation actor, it can tell us the upper bound accuracy of our method so we know whether we need to improve the candidate generation or candidate ranking. If a dataset actor is introduced to the computational graph as demonstrated below, its evaluate method can tell us statistics about the dataset.
 
 ```python
 from ream.prelude import NoParams, BaseActor, DatasetQuery
@@ -88,7 +87,7 @@ class DatasetActor(BaseActor[str, NoParams]):
             print(f"Dataset: {dsdict.name} - split {split} has {len(examples)} examples")
 ```
 
-Let's talk about caching. Each actor when they run, they will be uniquely identify by their name, version, and parameters (including the dependent actor parameters), and this is referred as actor state which you can retrieve from `BaseActor.get_actor_state` function. From this, we can create a unique folder associated with that state that you can used to store your cache data (the folder can be retrieved from the function `BaseActor.get_working_fs`). Whenever the actor's dependency is updated, you will always get a new folder so no worry about managing the cache yourself! To set it up, in the file that define the actor graph, init the ream workspace as follow:
+Let's talk about caching. Each actor when running will be uniquely identified by its name, version, and parameters (including the dependent actor parameters), and this is referred to as actor state which you can retrieve from `BaseActor.get_actor_state` function. From this, we can create a unique folder associated with that state that you can use to store your cache data (the folder can be retrieved from the function `BaseActor.get_working_fs`). Whenever the actor's dependency is updated, you will always get a new folder so no worry about managing the cache yourself! To set it up, in the file that defines the actor graph, init the ream workspace as follows:
 
 ```python
 from ream.prelude import ReamWorkspace, ActorGraph

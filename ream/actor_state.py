@@ -17,7 +17,7 @@ class ActorState:
     """Represent a state of an actor, including its class, versions, and parameters"""
 
     classpath: str
-    classversion: str
+    classversion: Union[str, int]
     params: Union[Any, List[Any], Dict[str, Any]]
     dependencies: List[ActorState]
 
@@ -25,7 +25,7 @@ class ActorState:
     def create(
         CLS: Type,
         args: Union[Any, List[Any], Dict[str, Any]],
-        version: Optional[str] = None,
+        version: Optional[Union[int, str]] = None,
         dependencies: Optional[List[ActorState]] = None,
     ) -> ActorState:
         """Compute a unique cache id"""
@@ -33,7 +33,7 @@ class ActorState:
             assert hasattr(CLS, "VERSION"), "Class must have a VERSION attribute"
             version = getattr(CLS, "VERSION")
 
-        assert isinstance(version, str), "Version must be a string"
+        assert isinstance(version, (int, str)), "Version must be a string"
 
         return ActorState(
             classpath=get_classpath(CLS),

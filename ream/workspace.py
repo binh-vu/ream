@@ -29,11 +29,13 @@ class ReamWorkspace:
 
     def reserve_working_dir(self, state: ActorState) -> Path:
         relpath = os.path.join(
-            state.classpath, slugify(state.classversion).replace("-", "_")
+            state.classpath, slugify(str(state.classversion)).replace("-", "_")
         )
         key = state.to_dict()
-        diskpath = f"{state.get_classname()}_v{state.classversion}"
-        path = self.fs.get(relpath=relpath, key=key, diskpath=diskpath, save_key=True)
+        diskpath = f"{state.get_classname()}/v{state.classversion}"
+        path = self.fs.get(
+            relpath=relpath, key=key, diskpath=diskpath, save_key=True, subdir=True
+        )
 
         if path.exists():
             return path.get()

@@ -3,7 +3,7 @@ from contextlib import contextmanager
 import os
 import sqlite3, enum, shutil
 from pathlib import Path
-from typing import Generator, Optional
+from typing import Generator, Optional, Union
 from loguru import logger
 from slugify import slugify
 from dataclasses import dataclass
@@ -35,16 +35,26 @@ class FS:
     def get(
         self,
         relpath: str,
-        key: Optional[dict] = None,
+        key: Optional[Union[dict, str, bytes]] = None,
         diskpath: Optional[str] = None,
         save_key: bool = False,
+        subdir: bool = False,
     ) -> FSPath:
-        """Get a path associated with a virtual relpath with key"""
+        """Get a path associated with a virtual relpath with key.
+
+        If the relpath is a directory (has extensions) and is already exists but with different key, it will create a new directory
+        with the unique number suffix when `subdir` is False, otherwise, it will create a subdirectory
+        named by the unique number.
+        """
         if key is None:
-            key = {}
             ser_key = b""
-        else:
+        elif isinstance(key, str):
+            ser_key = key.encode()
+        elif isinstance(key, dict):
             ser_key = orjson_dumps(key)
+        else:
+            assert isinstance(key, bytes)
+            ser_key = key
 
         # clean irregular characters
         if diskpath is None:
@@ -62,7 +72,12 @@ class FS:
         diskpath = str(pdiskpath)
 
         return FSPath(
-            relpath, diskpath=diskpath, ser_key=ser_key, save_key=save_key, fs=self
+            relpath,
+            diskpath=diskpath,
+            ser_key=ser_key,
+            save_key=save_key,
+            subdir=subdir,
+            fs=self,
         )
 
     @contextmanager
@@ -98,6 +113,7 @@ class FSPath:
     diskpath: str
     ser_key: bytes
     save_key: bool
+    subdir: bool
     fs: FS
     _id: Optional[int] = None
     _status: Optional[ItemStatus] = None
@@ -171,14 +187,17 @@ class FSPath:
 
                 pdiskpath = Path(self.diskpath)
                 ext = "".join(pdiskpath.suffixes)
-                self._realdiskpath = str(
-                    pdiskpath.parent
-                    / (
-                        pdiskpath.name[: len(pdiskpath.name) - len(ext)]
-                        + f"_{last_id + 1:03d}"
-                        + ext
+                if self.subdir and ext == "":
+                    self._realdiskpath = str(pdiskpath / f"{last_id + 1:03d}")
+                else:
+                    self._realdiskpath = str(
+                        pdiskpath.parent
+                        / (
+                            pdiskpath.name[: len(pdiskpath.name) - len(ext)]
+                            + f"_{last_id + 1:03d}"
+                            + ext
+                        )
                     )
-                )
                 cur = self.fs.db.execute(
                     "INSERT INTO files VALUES (?, ?, ?, ?)",
                     (

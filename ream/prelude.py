@@ -10,6 +10,7 @@ from ream.actors.interface import Actor
 from ream.actors.base import BaseActor
 from ream.actor_graph import ActorGraph, ActorNode, ActorEdge
 from ream.dataset_helper import DatasetQuery, DatasetDict
+from ream.cache_helper import Cache
 from ream.helper import configure_loguru
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "DatasetQuery",
     "DatasetDict",
     "configure_loguru",
+    "Cache",
 ]

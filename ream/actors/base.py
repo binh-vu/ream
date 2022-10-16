@@ -4,13 +4,10 @@ import functools
 import os
 from pathlib import Path
 from typing import (
-    Any,
-    Callable,
-    List,
     Optional,
+    List,
     Type,
     TypeVar,
-    Union,
     Generic,
 )
 from ream.actor_state import ActorState
@@ -31,7 +28,7 @@ class BaseActor(Generic[E, P], Actor[E]):
         dep_actors: Optional[List[BaseActor]] = None,
     ):
         self._working_fs: Optional[FS] = None
-        self.dep_actors = dep_actors or []
+        self.dep_actors: List[BaseActor] = dep_actors or []
         self.params = params
         self.logger = logger.bind(cls=self.__class__.__name__)
 
@@ -78,34 +75,3 @@ class BaseActor(Generic[E, P], Actor[E]):
     def get_verbose_level(self) -> int:
         """Get the verbose level of this actor from the environment variable"""
         return int(os.environ.get(self.__class__.__name__.upper() + "_VERBOSE", "0"))
-
-    @staticmethod
-    def filecache(
-        filename: Union[str, Callable[..., str]],
-        serialize: Callable[[Any, Path], None],
-        deserialize: Callable[[Path], Any],
-    ) -> Callable:
-        """Decorator to cache the result of a function to a file."""
-
-        def wrapper_fn(func):
-            @functools.wraps(func)
-            def fn(self: BaseActor, *args, **kwargs):
-                fs = self.get_working_fs()
-                if isinstance(filename, str):
-                    cache_filename = filename
-                else:
-                    cache_filename = filename(*args, **kwargs)
-
-                cache_file = fs.get(cache_filename)
-                if not cache_file.exists():
-                    with fs.acquire_write_lock():
-                        output = func(self, *args, **kwargs)
-                        with cache_file.reserve_and_track() as fpath:
-                            serialize(output, fpath)
-                else:
-                    output = deserialize(cache_file.get())
-                return output
-
-            return fn
-
-        return wrapper_fn

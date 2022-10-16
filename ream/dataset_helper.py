@@ -35,48 +35,51 @@ class DatasetQuery(Generic[E]):
             raise ValueError(f"Invalid dataset query: {query}")
 
         dataset = m.group("ds")
-        query = m.group("query")
+        splitquery = m.group("query")
         shuffle = m.group("shuffle") is not None
         seed = int(m.group("seed")[1:]) if m.group("seed") is not None else None
 
         subsets = {}
-        for subset in query.split("+"):
-            m = re.match(
-                r"^(?P<sname>[^\[]*)\[(?P<start>\d+\%?)?:(?P<end>\d+\%?)\]", subset
-            )
-            assert m is not None, f"Invalid subset spec: {subset}"
-            slices = []
-            for name in ["end", "start"]:
-                if name == "start" and m.group(name) is None:
+        if splitquery != "":
+            for subset in splitquery.split("+"):
+                m = re.match(
+                    r"^(?P<sname>[^\[]*)\[(?P<start>\d+\%?)?:(?P<end>\d+\%?)\]", subset
+                )
+                assert (
+                    m is not None
+                ), f"Invalid subset spec: `{subset}` in `{splitquery}` in `{query}`"
+                slices = []
+                for name in ["end", "start"]:
+                    if name == "start" and m.group(name) is None:
+                        slices.append(
+                            {
+                                "value": 0,
+                                "is_percentage": slices[-1]["is_percentage"],
+                                "absolute_value": 0,
+                            }
+                        )
+                        continue
+                    value = m.group(name)
+                    is_percentage = value.endswith("%")
+                    if is_percentage:
+                        value = int(value[:-1]) / 100
+                    else:
+                        value = int(value)
                     slices.append(
                         {
-                            "value": 0,
-                            "is_percentage": slices[-1]["is_percentage"],
-                            "absolute_value": 0,
+                            "value": value,
+                            "is_percentage": is_percentage,
+                            "absolute_value": value,
                         }
                     )
-                    continue
-                value = m.group(name)
-                is_percentage = value.endswith("%")
-                if is_percentage:
-                    value = int(value[:-1]) / 100
-                else:
-                    value = int(value)
-                slices.append(
-                    {
-                        "value": value,
-                        "is_percentage": is_percentage,
-                        "absolute_value": value,
-                    }
-                )
 
-            assert (
-                len({x["is_percentage"] for x in slices}) == 1
-            ), f"Slices must be either percentage or absolute: {slices}"
+                assert (
+                    len({x["is_percentage"] for x in slices}) == 1
+                ), f"Slices must be either percentage or absolute: {slices}"
 
-            start = slices[1]
-            end = slices[0]
-            subsets[m.group("sname")] = (start, end)
+                start = slices[1]
+                end = slices[0]
+                subsets[m.group("sname")] = (start, end)
 
         return DatasetQuery(dataset, subsets, shuffle, seed)
 

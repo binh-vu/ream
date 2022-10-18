@@ -38,7 +38,7 @@ class Actor(ABC, Generic[E]):
         """Run the actor with a single example"""
         raise NotImplementedError()
 
-    def run_on_dataset(self, dataset: str):
+    def run_dataset(self, dataset: str):
         """Run the actor on examples from a dataset."""
         raise NotImplementedError()
 

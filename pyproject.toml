@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ream2"
-version = "1.2.0"
+version = "1.3.0"
 description = "An actor architecture for research software"
 authors = ["Binh Vu <binh@toan2.com>"]
 license = "MIT"

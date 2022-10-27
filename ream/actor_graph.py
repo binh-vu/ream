@@ -131,6 +131,7 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
         args: Optional[Sequence[str]] = None,
         run_args: Optional[Sequence[str]] = None,
         log_file: Optional[str] = None,
+        allow_unknown_args: bool = False,
     ):
         """Run an actor in evaluation mode.
 
@@ -141,13 +142,18 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
             eval_args: The arguments to the evaluate method.
             log_file: whether to log the output to a file. By default the exec-actor's working folder will be used as the current directory
                 so you can use a relative path to store the log file in the exec-actor's working directory.
+            allow_unknown_args: whether to allow unknown arguments to be passed to the params parser.
         """
         logger.debug("Determine the actor to run...")
         actor_node = self.get_actor_by_classname(actor_class)
         logger.debug("Initializing argument parser...")
         constructor = self.get_actor_constructor(actor_node)
         parser = constructor.get_params_parser()
-        params = parser.parse_args(args)
+        params = (
+            parser.parse_args(args)
+            if not allow_unknown_args
+            else parser.parse_known_args(args)[0]
+        )
 
         logger.debug("Constructing the actor...")
         actor = constructor.create_actor(params)

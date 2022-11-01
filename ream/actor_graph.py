@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, is_dataclass
+from inspect import Parameter, signature
 from operator import attrgetter
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+    get_type_hints,
+)
+from ream.actors.interface import Actor
 
 import yada
 from graph.interface import BaseEdge, BaseNode
@@ -102,6 +115,54 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
     @staticmethod
     def new():
         return ActorGraph(check_cycle=True, multigraph=False)
+
+    @staticmethod
+    def auto(actor_cls: Sequence[Type[BaseActor]], strict: bool = False) -> ActorGraph:
+        """Automatically create an actor graph from list of actor classes.
+
+        For each actor class, its dependent actors are discovered by inspecting arguments of the actor's init function.
+        If type hint's of an argument is Actor or subclass of Actor, it must be in the list of given actors, and a dependency edge between them is created.
+
+        Args:
+            actor_cls: List of actor classes
+            strict: whether to enforce all parameters of actor's init function must be type hinted.
+
+        Returns:
+            ActorGraph
+        """
+        g = ActorGraph.new()
+        idmap = {}
+        for cls in actor_cls:
+            if cls in idmap:
+                raise ValueError(
+                    f"Auto graph construction cannot handle duplicated actor class. Found one: {cls}"
+                )
+            idmap[cls] = g.add_node(ActorNode.new(cls))
+
+        for cls in actor_cls:
+            i = 0
+            argtypes = get_type_hints(cls.__init__)
+            for i, name in enumerate(signature(cls.__init__).parameters.keys()):
+                if name not in argtypes:
+                    if strict and i == 0 and name != "self":
+                        raise TypeError(
+                            f"Argument {name} of actor {cls} is not type hinted"
+                        )
+                    continue
+                argtype = argtypes[name]
+                if issubclass(argtype, (BaseActor, Actor)):
+                    if argtype not in idmap:
+                        raise ValueError(
+                            f"Cannot find actor class {argtype} in the list of given actors: {actor_cls}"
+                        )
+                    g.add_edge(
+                        ActorEdge(
+                            id=-1, source=idmap[cls], target=idmap[argtype], key=i
+                        )
+                    )
+                    i += 1
+
+        return g
 
     def create_actor(
         self, actor_class: Union[str, Type], args: Optional[Sequence[str]] = None

@@ -126,6 +126,7 @@ class DatasetQuery(Generic[E]):
         )
 
     def get_query(self, subsets: Optional[str | List[str]]) -> str:
+        """Generate a query string for retrieving the subsets of the dataset."""
         if subsets is None:
             subsets = list(self.subsets.keys())
         elif isinstance(subsets, str):

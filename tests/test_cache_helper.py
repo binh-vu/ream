@@ -1,14 +1,16 @@
-from dataclasses import dataclass
-from typing import List, Literal, Optional
+from inspect import Parameter
+from typing import List, Optional
 
-from ream.prelude import NoParams, BaseActor
-from ream.cache_helper import CacheArgsHelper
-from inspect import Parameter, signature, _empty
 import pytest
+from ream.cache_helper import CacheArgsHelper
+from ream.prelude import BaseActor, NoParams
 
 
 class CandidateGeneration(BaseActor[List[str], NoParams]):
     VERSION = 100
+
+    def __init__(self, params: NoParams):
+        super().__init__(params)
 
     def algo1(self, dataset: str, topk: int, seed: Optional[int]):
         raise NotImplementedError()
@@ -21,6 +23,16 @@ class CandidateGeneration(BaseActor[List[str], NoParams]):
 
     def algo3_dyn2(self, name: str, **kwargs):
         raise NotImplementedError()
+
+
+def func_with_complex_type(self, actor: CandidateGeneration):
+    raise NotImplementedError()
+
+
+# with __future__, all annotations become str: https://peps.python.org/pep-0563/
+# so the function below is a testcase for that
+def func_with_complex_type_postpone(self, actor: "CandidateGeneration"):
+    raise NotImplementedError()
 
 
 class TestCacheArgsHelper:
@@ -36,15 +48,29 @@ class TestCacheArgsHelper:
             with pytest.raises(TypeError):
                 helper.ensure_auto_cache_key_friendly()
 
+    def test_argtypes(self):
+        helper = CacheArgsHelper(CandidateGeneration.algo2_noann)
+        assert helper.get_cache_argtypes() == {
+            "examples": None,
+        }
+        helper = CacheArgsHelper(func_with_complex_type)
+        assert helper.get_cache_argtypes() == {
+            "actor": CandidateGeneration,
+        }
+        helper = CacheArgsHelper(func_with_complex_type_postpone)
+        assert helper.get_cache_argtypes() == {
+            "actor": CandidateGeneration,
+        }
+
     def test_keep_args(self):
         helper = CacheArgsHelper(CandidateGeneration.algo1)
-        assert helper.get_arg_type() == {
+        assert helper.get_cache_argtypes() == {
             "dataset": str,
             "topk": int,
             "seed": Optional[int],
         }
         helper.keep_args(["dataset", "seed"])
-        assert helper.get_arg_type() == {
+        assert helper.get_cache_argtypes() == {
             "dataset": str,
             "seed": Optional[int],
         }

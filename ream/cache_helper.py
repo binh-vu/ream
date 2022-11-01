@@ -3,7 +3,6 @@ from inspect import Parameter, signature
 
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -15,7 +14,9 @@ from typing import (
     Union,
     get_args,
     get_origin,
+    get_type_hints,
 )
+from loguru import logger
 
 import serde
 
@@ -100,6 +101,7 @@ class Cache:
 
             keyfn = cache_key
             if keyfn is None:
+                cache_args_helper.ensure_auto_cache_key_friendly()
                 keyfn = cache_args_helper.get_args_as_tuple
 
             @functools.wraps(func)
@@ -161,6 +163,7 @@ class Cache:
 
             keyfn = cache_key
             if keyfn is None:
+                cache_args_helper.ensure_auto_cache_key_friendly()
                 keyfn = lambda *args, **kwargs: orjson_dumps(
                     cache_args_helper.get_args(*args, **kwargs)
                 )
@@ -200,8 +203,22 @@ class CacheArgsHelper:
 
     def __init__(self, func: Callable):
         self.args: Dict[str, Parameter] = {}
+        try:
+            self.argtypes: Dict[str, Optional[Type]] = get_type_hints(func)
+        except TypeError:
+            logger.error(
+                "Cannot get type hints for function {}. "
+                "If this is due to eval function, it's mean that the type is incorrect (i.e., incorrect Python's code). "
+                "For example, we have a hugedict.prelude.RocksDBDict class, which is a class built from Rust (Python's extension module), "
+                "the class is not a generic class, but we have a .pyi file that declare it as a generic class (cheating). This works fine"
+                "for pylance and mypy checker, but it will cause error when we try to get type hints because the class is not subscriptable.",
+                func,
+            )
+            raise
         for name, param in signature(func).parameters.items():
             self.args[name] = param
+            if name not in self.argtypes:
+                self.argtypes[name] = None
 
         assert (
             next(iter(self.args)) == "self"
@@ -213,13 +230,8 @@ class CacheArgsHelper:
     def keep_args(self, names: Iterable[str]) -> None:
         self.cache_args = list(names)
 
-    def get_arg_type(self) -> Dict[str, Type]:
-        return {
-            name: self.args[name].annotation
-            if self.args[name].annotation is not Parameter.empty
-            else None
-            for name in self.cache_args
-        }
+    def get_cache_argtypes(self) -> Dict[str, Optional[Type]]:
+        return {name: self.argtypes[name] for name in self.cache_args}
 
     def ensure_auto_cache_key_friendly(self):
         for name in self.cache_args:
@@ -232,8 +244,8 @@ class CacheArgsHelper:
                     f"Variable arguments are not supported for automatically generating caching key to cache function call. Found one with name: {name}"
                 )
 
-            argtype = param.annotation
-            if argtype is Parameter.empty:
+            argtype = self.argtypes[name]
+            if argtype is None:
                 raise TypeError(
                     f"Automatically generating caching key to cache a function call requires all arguments to be annotated. Found one without annotation: {name}"
                 )

@@ -1,6 +1,12 @@
 # ream ![PyPI](https://img.shields.io/pypi/v/ream2) ![Python](https://img.shields.io/badge/python-v3.8+-blue.svg)
 
-A simple actor architecture for your research project.
+A simple actor architecture for your research project. It helps addressing three problems so that you can focus on your main research:
+
+1. Configuring hyper-parameters of your method
+2. Speed-up the feedback cycles via easy & smart caching
+3. Running each step in your method independently.
+
+It's more powerful to combine with [`osin`](https://github.com/binh-vu/osin).
 
 ## Introduction
 
@@ -48,13 +54,21 @@ class CandidateRanking(BaseActor[pd.DataFrame, CanRankParams]):
 
 The two actors make the code more modular and closer to releasable quality. To define the linking pipeline, we can use `ActorGraph`:
 
-````python
+```python
 from ream.prelude import ActorGraph, ActorNode, ActorEdge
 
 g = ActorGraph()
 cangen = g.add_node(ActorNode.new(CandidateGeneration))
 canrank = g.add_node(ActorNode.new(CandidateRanking))
 g.add_edge(BaseEdge(id=-1, source=cangen, target=canrank))
+```
+
+If we provide type hints for arguments of actors, as in the examples above, you can automatically construct the graph by given the actor classes.
+
+```python
+from ream.prelude import ActorGraph
+
+g = ActorGraph.auto([CandidateGeneration, CandidateRanking])
 ```
 
 This seems boring and does not offer much, but then you can pick whatever actor and its function you want to call without manually initializing and parsing command line arguments. For example, we want to trigger the `evaluate` method on each actor. The parameters of the actors will be obtained automatically from the command line arguments, thanks to the [`yada`](https://github.com/binh-vu/yada) parser.
@@ -101,7 +115,7 @@ g = ActorGraph()
 
 ```python
 pip install ream2  # not ream
-````
+```
 
 ## Examples
 

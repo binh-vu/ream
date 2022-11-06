@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import functools
 from inspect import Parameter, signature
 
@@ -10,15 +12,19 @@ from typing import (
     List,
     Literal,
     Optional,
+    Protocol,
     Type,
+    TypeVar,
     Union,
     get_args,
     get_origin,
     get_type_hints,
 )
+from typing_extensions import Self
 from loguru import logger
+from ream.fs import FS
 
-import serde
+import serde.prelude as serde
 
 from ream.actors.base import BaseActor
 from ream.helper import orjson_dumps
@@ -72,9 +78,37 @@ class PickleSerdeCache:
         )
 
 
+class ClsSerdeCache:
+    """A cache that uses the save/load methods of a class as deser/ser functions"""
+
+    def __init__(self, cls: type[SaveLoadProtocol]):
+        self.cls = cls
+
+    def file(
+        self,
+        cache_args: Optional[List[str]] = None,
+        cache_key: Optional[Callable[[dict], bytes]] = None,
+        filename: Optional[Union[str, Callable[..., str]]] = None,
+        compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
+        mem_persist: bool = False,
+        cache_attr: str = "_cache",
+    ):
+        return Cache.file(
+            ser=self.cls.save,
+            deser=self.cls.load,
+            cache_args=cache_args,
+            cache_key=cache_key,
+            filename=filename,
+            compression=compression,
+            mem_persist=mem_persist,
+            cache_attr=cache_attr,
+        )
+
+
 class Cache:
     jl = JLSerdeCache
     pickle = PickleSerdeCache
+    cls = ClsSerdeCache
 
     @staticmethod
     def mem(
@@ -129,7 +163,9 @@ class Cache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
     ) -> Callable:
-        """Decorator to cache the result of a function to a file.
+        """Decorator to cache the result of a function to a file. The function must
+        be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
+        the directory to store the cached file.
 
         Note: It does not support function with variable number of arguments.
 
@@ -169,7 +205,7 @@ class Cache:
                 )
 
             @functools.wraps(func)
-            def fn(self: BaseActor, *args, **kwargs):
+            def fn(self: HasWorkingFsTrait, *args, **kwargs):
                 fs = self.get_working_fs()
 
                 if isinstance(filename2, str):
@@ -288,3 +324,38 @@ class CacheArgsHelper:
     def get_args_as_tuple(self, *args, **kwargs) -> tuple:
         # TODO: improve me!
         return tuple(self.get_args(*args, **kwargs).values())
+
+
+class HasWorkingFsTrait(Protocol):
+    def get_working_fs(self) -> FS:
+        ...
+
+
+class Cacheable:
+    """A class that implement HasWorkingFSTrait so it can be used with @Cache.file decorator."""
+
+    def __init__(self, workdir: Path):
+        self.workdir = FS(workdir)
+
+    def get_working_fs(self) -> FS:
+        return self.workdir
+
+
+class SaveLoadProtocol(Protocol):
+    def save(self, file: Path) -> None:
+        ...
+
+    @classmethod
+    def load(cls, file: Path) -> Self:
+        ...
+
+
+def unwrap_cache_decorators(cls: type, methods: list[str] | None = None):
+    """Decorator to disable caching decorator by unwrap all methods of a class."""
+    for method in methods or dir(cls):
+        fn = getattr(cls, method)
+        iswrapped = hasattr(fn, "__wrapped__")
+        while hasattr(fn, "__wrapped__"):
+            fn = getattr(fn, "__wrapped__")  # type: ignore
+        if iswrapped:
+            setattr(cls, method, fn)

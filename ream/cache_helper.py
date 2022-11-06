@@ -53,6 +53,7 @@ class JLSerdeCache:
             compression=compression,
             mem_persist=mem_persist,
             cache_attr=cache_attr,
+            fileext="jl",
         )
 
 
@@ -75,14 +76,16 @@ class PickleSerdeCache:
             compression=compression,
             mem_persist=mem_persist,
             cache_attr=cache_attr,
+            fileext="pkl",
         )
 
 
 class ClsSerdeCache:
     """A cache that uses the save/load methods of a class as deser/ser functions"""
 
-    def __init__(self, cls: type[SaveLoadProtocol]):
+    def __init__(self, cls: type[SaveLoadProtocol], ext: str = ".dat"):
         self.cls = cls
+        self.ext = ext
 
     def file(
         self,
@@ -102,6 +105,7 @@ class ClsSerdeCache:
             compression=compression,
             mem_persist=mem_persist,
             cache_attr=cache_attr,
+            fileext=self.ext,
         )
 
 
@@ -162,6 +166,7 @@ class Cache:
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
         mem_persist: bool = False,
         cache_attr: str = "_cache",
+        fileext: Optional[str] = None,
     ) -> Callable:
         """Decorator to cache the result of a function to a file. The function must
         be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
@@ -181,17 +186,25 @@ class Cache:
                 this option has no effect if the filename is a function.
             mem_persist: If True, the cache will also be stored in memory. This is a combination of mem and file cache.
             cache_attr: Name of the attribute to use to store the cache in the instance.
+            fileext: Extension of the file to use if the filename is None (thus is derived automatically from the function name).
         """
 
         def wrapper_fn(func):
             if filename is None:
                 filename2 = func.__name__
+                if fileext is not None:
+                    filename2 += f".{fileext}"
                 if compression is not None:
                     filename2 += f".{compression}"
             else:
                 filename2 = filename
                 if isinstance(filename2, str) and compression is not None:
                     assert filename2.endswith(compression)
+
+            if isinstance(filename2, str):
+                assert (
+                    filename2.rfind(".") != -1
+                ), f"Caching to a file without extension is not supported. Got: {filename2}"
 
             cache_args_helper = CacheArgsHelper(func)
             if cache_args is not None:
@@ -212,10 +225,14 @@ class Cache:
                     cache_filename = filename2
                 else:
                     cache_filename = filename2(*args, **kwargs)
+                    assert (
+                        cache_filename.rfind(".") != -1
+                    ), f"Caching to a file without extension is not supported. Got: {cache_filename}"
 
                 cache_file = fs.get(
                     cache_filename, key=keyfn(*args, **kwargs), save_key=True
                 )
+
                 if not cache_file.exists():
                     with fs.acquire_write_lock(), cache_file.reserve_and_track() as fpath:
                         output = func(self, *args, **kwargs)

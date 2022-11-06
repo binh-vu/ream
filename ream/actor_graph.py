@@ -157,7 +157,7 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
                         )
                     g.add_edge(
                         ActorEdge(
-                            id=-1, source=idmap[cls], target=idmap[argtype], key=i
+                            id=-1, source=idmap[argtype], target=idmap[cls], key=i
                         )
                     )
                     i += 1

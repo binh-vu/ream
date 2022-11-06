@@ -154,6 +154,12 @@ class NumpyDataModel:
     def shallow_clone(self):
         return self.__class__(*(getattr(self, name) for name in self.__slots__))
 
+    def replace(self, field: str, value: np.ndarray):
+        assert getattr(self, field).shape == value.shape
+        newobj = self.shallow_clone()
+        setattr(newobj, field, value)
+        return newobj
+
     def swap_(self, i: int, j: int):
         """Swap the position of two elements at index i and j.
         Note: This operator mutates the array

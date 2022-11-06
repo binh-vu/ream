@@ -118,3 +118,14 @@ def resolve_type_arguments(
         raise ValueError(f"{target_type} is not a subclass of {query_type}")
     else:
         return ()
+
+
+def has_dict_with_nonstr_keys(ann):
+    origin = get_origin(ann)
+    args = get_args(ann)
+
+    if origin is None or len(args) == 0:
+        return False
+    if origin is dict and args[0] is not str:
+        return True
+    return any(has_dict_with_nonstr_keys(arg) for arg in args)

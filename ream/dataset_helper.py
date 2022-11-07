@@ -80,7 +80,13 @@ class DatasetQuery(Generic[E]):
                 start = slices[1]
                 end = slices[0]
                 subsets[m.group("sname")] = (start, end)
-
+        else:
+            subsets: Dict[str, Tuple[RawSlice, RawSlice]] = {
+                "": (
+                    {"value": 0, "is_percentage": True, "absolute_value": 0},
+                    {"value": 1, "is_percentage": True, "absolute_value": 1},
+                )
+            }
         return DatasetQuery(dataset, subsets, shuffle, seed)
 
     def select(self, array: List[E]) -> DatasetDict[List[E]]:
@@ -93,7 +99,10 @@ class DatasetQuery(Generic[E]):
                 end["absolute_value"] = int(end["value"] * n_exs)
 
             total_percentage = sum(
-                [end["value"] - start["value"] for start, end in self.subsets.values()]
+                [
+                    (end["value"] - start["value"]) * 100
+                    for start, end in self.subsets.values()
+                ]
             )
             n_selected = sum(
                 [
@@ -139,7 +148,9 @@ class DatasetQuery(Generic[E]):
             start, end = self.subsets[subset]
             sper = "%" if start["is_percentage"] else ""
             eper = "%" if end["is_percentage"] else ""
-            filters.append(f"{subset}[{start['value']}{sper}:{end['value']}{eper}]")
+            filters.append(
+                f"{subset}[{int(start['value'] * 100)}{sper}:{int(end['value'] * 100)}{eper}]"
+            )
 
         filter = "+".join(filters)
         if len(subsets) > 1 or "" not in subsets:

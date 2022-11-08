@@ -146,11 +146,15 @@ class DatasetQuery(Generic[E]):
         filters = []
         for subset in subsets:
             start, end = self.subsets[subset]
-            sper = "%" if start["is_percentage"] else ""
-            eper = "%" if end["is_percentage"] else ""
-            filters.append(
-                f"{subset}[{int(start['value'] * 100)}{sper}:{int(end['value'] * 100)}{eper}]"
-            )
+            if start["is_percentage"]:
+                start = f"{int(start['value'] * 100)}%"
+            else:
+                start = start["value"]
+            if end["is_percentage"]:
+                end = f"{int(end['value'] * 100)}%"
+            else:
+                end = end["value"]
+            filters.append(f"{subset}[{start}:{end}]")
 
         filter = "+".join(filters)
         if len(subsets) > 1 or "" not in subsets:

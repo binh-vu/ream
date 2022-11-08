@@ -7,14 +7,11 @@ from pathlib import Path
 from typing import (
     Any,
     Callable,
-    Dict,
     Iterable,
-    List,
     Literal,
     Optional,
     Protocol,
     Type,
-    TypeVar,
     Union,
     get_args,
     get_origin,
@@ -26,7 +23,6 @@ from ream.fs import FS
 
 import serde.prelude as serde
 
-from ream.actors.base import BaseActor
 from ream.helper import orjson_dumps
 from serde.helper import JsonSerde
 
@@ -36,7 +32,7 @@ NoneType = type(None)
 class JLSerdeCache:
     @staticmethod
     def file(
-        cache_args: Optional[List[str]] = None,
+        cache_args: Optional[list[str]] = None,
         cache_key: Optional[Callable[[dict], bytes]] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
@@ -60,7 +56,7 @@ class JLSerdeCache:
 class PickleSerdeCache:
     @staticmethod
     def file(
-        cache_args: Optional[List[str]] = None,
+        cache_args: Optional[list[str]] = None,
         cache_key: Optional[Callable[[dict], bytes]] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
@@ -89,7 +85,7 @@ class ClsSerdeCache:
 
     def file(
         self,
-        cache_args: Optional[List[str]] = None,
+        cache_args: Optional[list[str]] = None,
         cache_key: Optional[Callable[[dict], bytes]] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
@@ -116,7 +112,7 @@ class Cache:
 
     @staticmethod
     def mem(
-        cache_args: Optional[List[str]] = None,
+        cache_args: Optional[list[str]] = None,
         cache_key: Optional[Callable[[dict], bytes]] = None,
         cache_attr: str = "_cache",
     ):
@@ -125,7 +121,7 @@ class Cache:
         Note: It does not support function with variable number of arguments.
 
         Args:
-            cache_args: List of arguments to use for the cache key. If None, all arguments are used.
+            cache_args: list of arguments to use for the cache key. If None, all arguments are used.
             cache_key: Function to use to generate the cache key. If None, the default is used. The default function
                 only support arguments of types str, int, bool, and None.
             cache_attr: Name of the attribute to use to store the cache in the instance.
@@ -160,7 +156,7 @@ class Cache:
     def file(
         ser: Callable[[Any, Path], None],
         deser: Callable[[Path], Any],
-        cache_args: Optional[List[str]] = None,
+        cache_args: Optional[list[str]] = None,
         cache_key: Optional[Callable[[dict], bytes]] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
@@ -177,7 +173,7 @@ class Cache:
         Args:
             ser: A function to serialize the output of the function to a file.
             deser: A function to deserialize the output of the function from a file.
-            cache_args: List of arguments to use for the cache key. If None, all arguments are used.
+            cache_args: list of arguments to use for the cache key. If None, all arguments are used.
             cache_key: Function to use to generate the cache key. If None, the default is used. The default function
                 only support arguments of types str, int, bool, and None.
             filename: Filename to use for the cache file. If None, the name of the function is used. If it is a function,
@@ -255,9 +251,9 @@ class CacheArgsHelper:
     """
 
     def __init__(self, func: Callable):
-        self.args: Dict[str, Parameter] = {}
+        self.args: dict[str, Parameter] = {}
         try:
-            self.argtypes: Dict[str, Optional[Type]] = get_type_hints(func)
+            self.argtypes: dict[str, Optional[Type]] = get_type_hints(func)
         except TypeError:
             logger.error(
                 "Cannot get type hints for function {}. "
@@ -277,13 +273,13 @@ class CacheArgsHelper:
             next(iter(self.args)) == "self"
         ), "The first argument of the method must be self, an instance of BaseActor"
         self.args.pop("self")
-        self.argnames: List[str] = list(self.args.keys())
+        self.argnames: list[str] = list(self.args.keys())
         self.cache_args = self.argnames
 
     def keep_args(self, names: Iterable[str]) -> None:
         self.cache_args = list(names)
 
-    def get_cache_argtypes(self) -> Dict[str, Optional[Type]]:
+    def get_cache_argtypes(self) -> dict[str, Optional[Type]]:
         return {name: self.argtypes[name] for name in self.cache_args}
 
     def ensure_auto_cache_key_friendly(self):

@@ -44,6 +44,14 @@ class Index(Generic[T]):
         return Index(pickle.loads(obj))
 
 
+class OffsetIndex(Index[T], Generic[T]):
+    __slots__ = ["offset"]
+
+    def __init__(self, index: T, offset: int):
+        super().__init__(index)
+        self.offset = offset
+
+
 @dataclass
 class NumpyDataModelMetadata:
     cls: type
@@ -122,9 +130,9 @@ class NumpyDataModel:
                             index_prop_idxs.append((i, None))
                             if has_dict_with_nonstr_keys(ann):
                                 useorjson = False
-                    else:
+                    elif ann_origin is not type(None):
                         raise ValueError(
-                            f"Value of attribute {name} is not numpy array or index"
+                            f"Value of attribute {name} is not numpy array or index or NoneType"
                         )
 
             if useorjson:
@@ -314,3 +322,22 @@ class NumpyDataModelContainer:
             kwargs[field.name] = fieldtype.load(file)
 
         return NumpyDataModelContainer(**kwargs)
+
+
+class ContiguousIndexChecker:
+    """A helper class to check if the order of range of items in the numpy data model's index is contiguous"""
+
+    def __init__(self, start: int = 0):
+        self.start = start
+
+    def next(self, start: int, end: int):
+        if self.start != start:
+            raise ValueError(
+                f"Encounter a range that is not continuous from the previous range. Expected {self.start}, got {start}"
+            )
+        if start > end:
+            raise ValueError(
+                f"The provided range is invalid. Start {start} is greater than end {end}"
+            )
+        self.start = end
+        return self

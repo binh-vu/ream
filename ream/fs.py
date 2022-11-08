@@ -228,7 +228,7 @@ class FSPath:
             pdiskpath = Path(self.diskpath)
             ext = "".join(pdiskpath.suffixes)
 
-            if ext != "":
+            if ext == "":
                 # this is the folder, remove everything else except _KEY
                 for f in (self.fs.root / self._realdiskpath).iterdir():
                     if f.name == "_KEY":

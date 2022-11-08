@@ -39,4 +39,8 @@ class ReamWorkspace:
 
         if path.exists():
             return path.get()
-        return path.reserve()
+        # reserve the working directory for this actor, as we do not perform any
+        # action that need to track, we need to mark it as success otherwise, the
+        # next time we reserve it, it is going to delete the content of the directory
+        with path.reserve_and_track() as realpath:
+            return realpath

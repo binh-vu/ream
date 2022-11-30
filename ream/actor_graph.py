@@ -190,7 +190,7 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
         actor_class: Union[str, Type],
         actor_method: str = "evaluate",
         args: Optional[Sequence[str]] = None,
-        run_args: Optional[Sequence[str]] = None,
+        run_args: Optional[Union[Sequence[Any], Any]] = None,
         log_file: Optional[str] = None,
         allow_unknown_args: bool = False,
     ):
@@ -200,7 +200,7 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
             actor_class: The class of the actor to run. If there are multiple actors
                 in the graph having the same name, it will throw an error.
             args: The arguments to the params parser. If not provided, it will use the arguments from sys.argv
-            eval_args: The arguments to the evaluate method.
+            run_args: The arguments to the evaluate method. If it is a sequence, then it will be passed as *args.
             log_file: whether to log the output to a file. By default the exec-actor's working folder will be used as the current directory
                 so you can use a relative path to store the log file in the exec-actor's working directory.
             allow_unknown_args: whether to allow unknown arguments to be passed to the params parser.
@@ -229,7 +229,13 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
             )
 
         logger.debug("Run {}.{}...", actor.__class__.__qualname__, actor_method)
-        getattr(actor, actor_method)(*(run_args or ()))
+        method = getattr(actor, actor_method)
+        if run_args is None:
+            method()
+        elif isinstance(run_args, Sequence):
+            method(*(run_args or ()))
+        else:
+            method(run_args)
 
     def get_actor_constructor(self, actor_node: ActorNode) -> ActorConstructor:
         nodes = {}

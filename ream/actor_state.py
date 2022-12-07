@@ -8,7 +8,7 @@ from typing import (
     Type,
     Union,
 )
-from ream.params_helper import param_as_dict
+from ream.params_helper import DataClassInstance, param_as_dict
 from ream.helper import get_classpath
 
 
@@ -18,13 +18,17 @@ class ActorState:
 
     classpath: str
     classversion: Union[str, int]
-    params: Union[Any, List[Any], Dict[str, Any]]
+    params: Union[
+        DataClassInstance, List[DataClassInstance], Dict[str, DataClassInstance]
+    ]
     dependencies: List[ActorState]
 
     @staticmethod
     def create(
         CLS: Type,
-        args: Union[Any, List[Any], Dict[str, Any]],
+        args: Union[
+            DataClassInstance, List[DataClassInstance], Dict[str, DataClassInstance]
+        ],
         version: Optional[Union[int, str]] = None,
         dependencies: Optional[List[ActorState]] = None,
     ) -> ActorState:

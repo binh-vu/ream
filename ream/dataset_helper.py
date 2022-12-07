@@ -154,7 +154,12 @@ class DatasetQuery(Generic[E]):
                 end = f"{int(end['value'] * 100)}%"
             else:
                 end = end["value"]
-            filters.append(f"{subset}[{start}:{end}]")
+            if start == "0%" and end == "100%":
+                filters.append(f"{subset}")
+            elif start == 0:
+                filters.append(f"{subset}[:{end}]")
+            else:
+                filters.append(f"{subset}[{start}:{end}]")
 
         filter = "+".join(filters)
         if len(subsets) > 1 or "" not in subsets:

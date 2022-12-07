@@ -26,6 +26,7 @@ import pickle
 import struct
 from ream.helper import has_dict_with_nonstr_keys
 from serde.helper import get_compression, get_open_fn
+from tqdm import tqdm
 
 T = TypeVar("T")
 
@@ -55,13 +56,21 @@ class OffsetIndex(Index[T], Generic[T]):
 @dataclass
 class NumpyDataModelMetadata:
     cls: type
+    # list of properties of the data model
     props: Sequence[str]
+    # list of properties that are numpy arrays
     array_props: Sequence[str]
+    # list of properties that are numpy 2D arrays
     array2d_props: Sequence[str]
+    # list of properties that are index (dictionary, list, Index)
     index_props: Sequence[str]
+    # position of each property, which is in the array_props, in the props list.
     array_prop_idxs: Sequence[int]
+    # position of each property, which is in the index_props, in the props list.
     index_prop_idxs: Sequence[Tuple[int, Optional[Type[Index]]]]
+    # default serialize function to serialize the index
     default_serdict: Callable[[dict], bytes]
+    # default deserialize function to deserialize the index
     default_deserdict: Callable[[bytes], dict]
 
 
@@ -301,6 +310,88 @@ class NumpyDataModel:
                     i += 1
 
         return cls(**kwargs)
+
+    def is_range_index_valid(self):
+        """Check if the index of a numpy data model is valid: the index is contiguous, no overlapping
+        and covers the entire range of the numpy arrays.
+
+        This function assumes that the index is a dictionary (or instance of Index[dict]), and each value in the index
+        is either (start, end) if the index is a single-level index or (start, end, nested_index) if the index is a
+        multi-level index.
+        """
+        metadata: NumpyDataModelMetadata = self._metadata  # type: ignore
+        size = len(self)
+        for name in metadata.index_props:
+            index = getattr(self, name)
+            if isinstance(index, Index):
+                index = index.index
+            if not isinstance(index, dict):
+                raise TypeError(
+                    f"Index {name} is not a dictionary. This function only supports dictionary index"
+                )
+
+            # figure out the index level
+            index_level = self._get_range_index_level(index)
+            if index_level == 0 and size != 0:
+                raise ValueError("Index is empty but the numpy array is not empty")
+
+            indices = [index]
+            for level in tqdm(
+                range(index_level), desc="check index at different levels"
+            ):
+                cic = ContiguousIndexChecker()
+                next_indices = []
+                for idx in tqdm(indices):
+                    if len(idx) == 0:
+                        continue
+                    for elem in idx.values():
+                        cic.next(elem[0], elem[1])
+                        if len(elem) == 3:
+                            next_indices.append(elem[2])
+                if not cic.start == size:
+                    raise ValueError(
+                        f"Index is not covered all elements in the array at level {level}. Expected {size} but got {cic.start}"
+                    )
+                indices = next_indices
+
+    def _get_range_index_level(self, index: dict):
+        """Get the level of a range index. This function assumes that the index is a dictionary, and each value in the index
+        is either (start, end) if the index is a single-level index or (start, end, nested_index) if the index is a
+        multi-level index."""
+        if len(index) == 0:
+            return 0
+
+        level = []
+        for key, value in index.items():
+            if not isinstance(value, (list, tuple)):
+                raise TypeError(f"Index element {value} is not a sequence")
+            if len(value) == 2:
+                if not isinstance(value[0], int) or not isinstance(value[1], int):
+                    raise TypeError(
+                        f"Index element {value} does not have the form: (start, end)"
+                    )
+                level.append(1)
+            elif len(value) == 3:
+                if (
+                    not isinstance(value[0], int)
+                    or not isinstance(value[1], int)
+                    and not isinstance(value[2], dict)
+                ):
+                    raise TypeError(
+                        f"Index element {value} does not have the form: (start, end, nested_index)"
+                    )
+                level.append(self._get_range_index_level(value[2]) + 1)
+            else:
+                raise TypeError(
+                    f"Index element {value} does not have the form: (start, end) or (start, end, nested_index)"
+                )
+
+        level = set(level)
+        if len(level) > 1:
+            raise ValueError(
+                "The index is not a balanced multi-level index as some elements have different levels"
+            )
+        return level.pop()
 
 
 @dataclass

@@ -142,6 +142,17 @@ class FSPath:
 
         return self._status
 
+    def update_status(self, status: ItemStatus):
+        """Update the status of the file"""
+        if self._id is None:
+            raise ValueError("The file does not exist in the database")
+        with self.fs.db:
+            self.fs.db.execute(
+                "UPDATE files SET success = ? WHERE rowid = ?",
+                (status, self._id),
+            )
+        self._status = status
+
     def exists(self) -> bool:
         return self.status() == ItemStatus.Success
 

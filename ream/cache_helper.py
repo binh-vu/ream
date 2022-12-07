@@ -27,13 +27,15 @@ from ream.helper import orjson_dumps
 from serde.helper import JsonSerde
 
 NoneType = type(None)
+# arguments are (self, *args, **kwargs)
+CacheKeyFn = Callable[..., bytes]
 
 
 class JLSerdeCache:
     @staticmethod
     def file(
         cache_args: Optional[list[str]] = None,
-        cache_key: Optional[Callable[[dict], bytes]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
         mem_persist: bool = False,
@@ -57,7 +59,7 @@ class PickleSerdeCache:
     @staticmethod
     def file(
         cache_args: Optional[list[str]] = None,
-        cache_key: Optional[Callable[[dict], bytes]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
         mem_persist: bool = False,
@@ -79,14 +81,14 @@ class PickleSerdeCache:
 class ClsSerdeCache:
     """A cache that uses the save/load methods of a class as deser/ser functions"""
 
-    def __init__(self, cls: type[SaveLoadProtocol], ext: str = ".dat"):
+    def __init__(self, cls: type[SaveLoadProtocol], ext: Optional[str] = None):
         self.cls = cls
         self.ext = ext
 
     def file(
         self,
         cache_args: Optional[list[str]] = None,
-        cache_key: Optional[Callable[[dict], bytes]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
         mem_persist: bool = False,
@@ -113,7 +115,7 @@ class Cache:
     @staticmethod
     def mem(
         cache_args: Optional[list[str]] = None,
-        cache_key: Optional[Callable[[dict], bytes]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
         cache_attr: str = "_cache",
     ):
         """Decorator to cache the result of a function to an attribute in the instance in memory.
@@ -136,14 +138,18 @@ class Cache:
             keyfn = cache_key
             if keyfn is None:
                 cache_args_helper.ensure_auto_cache_key_friendly()
-                keyfn = cache_args_helper.get_args_as_tuple
+                keyfn = (
+                    lambda self, *args, **kwargs: cache_args_helper.get_args_as_tuple(
+                        *args, **kwargs
+                    )
+                )
 
             @functools.wraps(func)
             def fn(self, *args, **kwargs):
                 if not hasattr(self, cache_attr):
                     setattr(self, cache_attr, {})
                 cache = getattr(self, cache_attr)
-                key = (func_name, keyfn(*args, **kwargs))
+                key = (func_name, keyfn(self, *args, **kwargs))
                 if key not in cache:
                     cache[key] = func(self, *args, **kwargs)
                 return cache[key]
@@ -157,7 +163,7 @@ class Cache:
         ser: Callable[[Any, Path], None],
         deser: Callable[[Path], Any],
         cache_args: Optional[list[str]] = None,
-        cache_key: Optional[Callable[[dict], bytes]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
         mem_persist: bool = False,
@@ -173,7 +179,8 @@ class Cache:
         Args:
             ser: A function to serialize the output of the function to a file.
             deser: A function to deserialize the output of the function from a file.
-            cache_args: list of arguments to use for the cache key. If None, all arguments are used.
+            cache_args: list of arguments to use for the cache key. If None, all arguments are used. If cache_key is provided
+                this argument is ignored.
             cache_key: Function to use to generate the cache key. If None, the default is used. The default function
                 only support arguments of types str, int, bool, and None.
             filename: Filename to use for the cache file. If None, the name of the function is used. If it is a function,
@@ -197,11 +204,6 @@ class Cache:
                 if isinstance(filename2, str) and compression is not None:
                     assert filename2.endswith(compression)
 
-            if isinstance(filename2, str):
-                assert (
-                    filename2.rfind(".") != -1
-                ), f"Caching to a file without extension is not supported. Got: {filename2}"
-
             cache_args_helper = CacheArgsHelper(func)
             if cache_args is not None:
                 cache_args_helper.keep_args(cache_args)
@@ -209,7 +211,7 @@ class Cache:
             keyfn = cache_key
             if keyfn is None:
                 cache_args_helper.ensure_auto_cache_key_friendly()
-                keyfn = lambda *args, **kwargs: orjson_dumps(
+                keyfn = lambda self, *args, **kwargs: orjson_dumps(
                     cache_args_helper.get_args(*args, **kwargs)
                 )
 
@@ -220,13 +222,10 @@ class Cache:
                 if isinstance(filename2, str):
                     cache_filename = filename2
                 else:
-                    cache_filename = filename2(*args, **kwargs)
-                    assert (
-                        cache_filename.rfind(".") != -1
-                    ), f"Caching to a file without extension is not supported. Got: {cache_filename}"
+                    cache_filename = filename2(self, *args, **kwargs)
 
                 cache_file = fs.get(
-                    cache_filename, key=keyfn(*args, **kwargs), save_key=True
+                    cache_filename, key=keyfn(self, *args, **kwargs), save_key=True
                 )
 
                 if not cache_file.exists():
@@ -307,11 +306,7 @@ class CacheArgsHelper:
                     raise TypeError(
                         f"Automatically generating caching key to cache a function call requires all arguments to be one of type: str, int, bool, or None. Found {name} with type {argtype}"
                     )
-            elif origin is not Union:
-                raise TypeError(
-                    f"Automatically generating caching key to cache a function call requires all arguments to be one of type: str, int, bool, or None. Found {name} with type {argtype}"
-                )
-            else:
+            elif origin is Union:
                 args = get_args(argtype)
                 if any(
                     not issubclass(a, (str, int, bool)) and a is not NoneType
@@ -320,6 +315,19 @@ class CacheArgsHelper:
                     raise TypeError(
                         f"Automatically generating caching key to cache a function call requires all arguments to be one of type: str, int, bool, or None. Found {name} with type {argtype}"
                     )
+            elif origin is Literal:
+                args = get_args(argtype)
+                if any(
+                    not isinstance(a, (str, int, bool)) and a is not NoneType
+                    for a in args
+                ):
+                    raise TypeError(
+                        f"Automatically generating caching key to cache a function call requires all arguments to be one of type: str, int, bool, None, or Literal with values of those types. Found {name} with type {argtype}"
+                    )
+            else:
+                raise TypeError(
+                    f"Automatically generating caching key to cache a function call requires all arguments to be one of type: str, int, bool, or None. Found {name} with type {argtype}"
+                )
 
     def get_args(self, *args, **kwargs) -> dict:
         # TODO: improve me!

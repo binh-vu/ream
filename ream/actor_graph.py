@@ -165,7 +165,10 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
         return g
 
     def create_actor(
-        self, actor_class: Union[str, Type], args: Optional[Sequence[str]] = None
+        self,
+        actor_class: Union[str, Type],
+        args: Optional[Sequence[str]] = None,
+        log_file: Optional[str] = None,
     ):
         """Create an actor from arguments passed through the command lines
 
@@ -183,6 +186,15 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
 
         logger.debug("Constructing the actor...")
         actor = constructor.create_actor(params)
+        if log_file is not None:
+            (actor.get_working_fs().root / log_file).parent.mkdir(
+                parents=True, exist_ok=True
+            )
+            logger.add(
+                str(actor.get_working_fs().root / log_file),
+                colorize=True,
+                format=_logger_formatter,
+            )
         return actor
 
     def run(

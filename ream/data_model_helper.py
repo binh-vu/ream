@@ -374,7 +374,7 @@ class NumpyDataModelHelper:
         assert len(set(npmodel.__class__ for npmodel in npmodels)) == 1
         assert len(metadata.index_props) == 1
 
-        arrays = {prop: [] for prop in metadata.array_props}
+        arrays: dict = {prop: [] for prop in metadata.array_props}
         index = {}
         counter = 0
         for npmodel, key in zip(npmodels, keys):

@@ -16,6 +16,7 @@ from typing import (
     get_args,
     get_origin,
     get_type_hints,
+    Sequence,
 )
 from typing_extensions import Self
 from loguru import logger
@@ -369,6 +370,34 @@ class SaveLoadProtocol(Protocol):
     @classmethod
     def load(cls, file: Path) -> Self:
         ...
+
+    @staticmethod
+    def get_tuple_serde(
+        classes: Sequence[type[SaveLoadProtocol]], ext: Optional[str] = None
+    ):
+        def ser(items: Sequence[Optional[SaveLoadProtocol]], file: Path):
+            for i, item in enumerate(items):
+                if item is not None:
+                    ifile = file.parent / (
+                        file.name + f".{i}.{ext}" if ext else f".{i}"
+                    )
+                    item.save(ifile)
+            file.touch()
+
+        def deser(file: Path):
+            output = []
+            for i, cls in enumerate(classes):
+                ifile = file.parent / (file.name + f".{i}.{ext}" if ext else f".{i}")
+                if ifile.exists():
+                    output.append(cls.load(ifile))
+                else:
+                    output.append(None)
+            return tuple(output)
+
+        return {
+            "ser": ser,
+            "deser": deser,
+        }
 
 
 def unwrap_cache_decorators(cls: type, methods: list[str] | None = None):

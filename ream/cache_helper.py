@@ -82,7 +82,11 @@ class PickleSerdeCache:
 class ClsSerdeCache:
     """A cache that uses the save/load methods of a class as deser/ser functions"""
 
-    def __init__(self, cls: type[SaveLoadProtocol], ext: Optional[str] = None):
+    def __init__(
+        self,
+        cls: Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]],
+        ext: Optional[str] = None,
+    ):
         self.cls = cls
         self.ext = ext
 
@@ -243,6 +247,49 @@ class Cache:
 
         return wrapper_fn
 
+    @staticmethod
+    def get_serde(cls: Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]]):
+        def ser(item: Union[SaveLoadProtocol, SaveLoadCompressedProtocol], file: Path):
+            return item.save(file)
+
+        def deser(file: Path):
+            return cls.load(file)
+
+        return {"ser": ser, "deser": deser}
+
+    @staticmethod
+    def get_tuple_serde(
+        classes: Sequence[
+            Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]]
+        ],
+        exts: Optional[list[str]] = None,
+    ):
+        def ser(items: Sequence[Optional[SaveLoadProtocol]], file: Path):
+            for i, item in enumerate(items):
+                if item is not None:
+                    ifile = file.parent / (
+                        file.name + f".{i}.{exts[i]}" if exts is not None else f".{i}"
+                    )
+                    item.save(ifile)
+            file.touch()
+
+        def deser(file: Path):
+            output = []
+            for i, cls in enumerate(classes):
+                ifile = file.parent / (
+                    file.name + f".{i}.{exts[i]}" if exts is not None else f".{i}"
+                )
+                if ifile.exists():
+                    output.append(cls.load(ifile))
+                else:
+                    output.append(None)
+            return tuple(output)
+
+        return {
+            "ser": ser,
+            "deser": deser,
+        }
+
 
 class CacheArgsHelper:
     """Helper to working with arguments of a function. This class ensures
@@ -371,33 +418,14 @@ class SaveLoadProtocol(Protocol):
     def load(cls, file: Path) -> Self:
         ...
 
-    @staticmethod
-    def get_tuple_serde(
-        classes: Sequence[type[SaveLoadProtocol]], ext: Optional[str] = None
-    ):
-        def ser(items: Sequence[Optional[SaveLoadProtocol]], file: Path):
-            for i, item in enumerate(items):
-                if item is not None:
-                    ifile = file.parent / (
-                        file.name + f".{i}.{ext}" if ext else f".{i}"
-                    )
-                    item.save(ifile)
-            file.touch()
 
-        def deser(file: Path):
-            output = []
-            for i, cls in enumerate(classes):
-                ifile = file.parent / (file.name + f".{i}.{ext}" if ext else f".{i}")
-                if ifile.exists():
-                    output.append(cls.load(ifile))
-                else:
-                    output.append(None)
-            return tuple(output)
+class SaveLoadCompressedProtocol(Protocol):
+    def save(self, file: Path, compression: Optional[str] = None) -> None:
+        ...
 
-        return {
-            "ser": ser,
-            "deser": deser,
-        }
+    @classmethod
+    def load(cls, file: Path, compression: Optional[str] = None) -> Self:
+        ...
 
 
 def unwrap_cache_decorators(cls: type, methods: list[str] | None = None):

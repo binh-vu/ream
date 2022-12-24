@@ -224,8 +224,8 @@ class NumpyDataModel:
         cols = {name: getattr(self, name) for name in metadata.array_props}
         for name in metadata.array2d_props:
             array2d = cols[name]
-            cols[name] = array2d[:, 0]
-            for i in range(1, array2d.shape[1]):
+            cols.pop(name)
+            for i in range(array2d.shape[1]):
                 cols[f"{name}_{i}"] = array2d[:, i]
 
         pq.write_table(
@@ -291,7 +291,7 @@ class NumpyDataModel:
                         names.append(col)
                     else:
                         newcols.append(col)
-                names.sort()
+                names.sort(key=lambda x: int(x.replace(name + "_", "")))
                 array2d = np.stack([tbl.column(s).to_numpy() for s in names], axis=1)
                 kwargs[name] = array2d
                 columns = newcols

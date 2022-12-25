@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from inspect import Parameter, signature
-
+from collections import Sequence
 from pathlib import Path
 from typing import (
     Any,
@@ -82,16 +82,12 @@ class PickleSerdeCache:
 class ClsSerdeCache:
     """A cache that uses the save/load methods of a class as deser/ser functions"""
 
-    def __init__(
-        self,
-        cls: Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]],
-        ext: Optional[str] = None,
-    ):
-        self.cls = cls
-        self.ext = ext
-
+    @staticmethod
     def file(
-        self,
+        cls: type[SaveLoadProtocol]  # type: ignore
+        | type[SaveLoadCompressedProtocol]
+        | Sequence[type[SaveLoadProtocol] | type[SaveLoadCompressedProtocol]],
+        fileext: str | list[str],
         cache_args: Optional[list[str]] = None,
         cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
@@ -99,17 +95,77 @@ class ClsSerdeCache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
     ):
+        if isinstance(cls, Sequence):
+            if isinstance(fileext, list):
+                exts = fileext
+            else:
+                exts = [fileext] * len(cls)
+            fileext = "tuple"
+            obj = ClsSerdeCache.get_tuple_serde(cls, exts)
+            ser = obj["ser"]
+            deser = obj["deser"]
+        else:
+            assert isinstance(fileext, str)
+            obj = ClsSerdeCache.get_serde(cls)
+            ser = obj["ser"]
+            deser = obj["deser"]
+
         return Cache.file(
-            ser=self.cls.save,
-            deser=self.cls.load,
+            ser=ser,
+            deser=deser,
             cache_args=cache_args,
             cache_key=cache_key,
             filename=filename,
             compression=compression,
             mem_persist=mem_persist,
             cache_attr=cache_attr,
-            fileext=self.ext,
+            fileext=fileext,
         )
+
+    @staticmethod
+    def get_serde(
+        klass: Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]]
+    ):
+        def ser(item: Union[SaveLoadProtocol, SaveLoadCompressedProtocol], file: Path):
+            return item.save(file)
+
+        def deser(file: Path):
+            return klass.load(file)
+
+        return {"ser": ser, "deser": deser}
+
+    @staticmethod
+    def get_tuple_serde(
+        classes: Sequence[
+            Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]]
+        ],
+        exts: Optional[list[str]] = None,
+    ):
+        def ser(items: Sequence[Optional[SaveLoadProtocol]], file: Path):
+            for i, item in enumerate(items):
+                if item is not None:
+                    ifile = file.parent / (
+                        file.name + f".{i}.{exts[i]}" if exts is not None else f".{i}"
+                    )
+                    item.save(ifile)
+            file.touch()
+
+        def deser(file: Path):
+            output = []
+            for i, cls in enumerate(classes):
+                ifile = file.parent / (
+                    file.name + f".{i}.{exts[i]}" if exts is not None else f".{i}"
+                )
+                if ifile.exists():
+                    output.append(cls.load(ifile))
+                else:
+                    output.append(None)
+            return tuple(output)
+
+        return {
+            "ser": ser,
+            "deser": deser,
+        }
 
 
 class Cache:
@@ -191,10 +247,11 @@ class Cache:
             filename: Filename to use for the cache file. If None, the name of the function is used. If it is a function,
                 it will be called with the arguments of the function to generate the filename.
             compression: whether to compress the cache file, the compression is detected via the file extension. Therefore,
-                this option has no effect if the filename is a function.
+                this option has no effect if filename is provided. Moreover, when filename is a function, it cannot check
+                if the filename has the correct extension.
             mem_persist: If True, the cache will also be stored in memory. This is a combination of mem and file cache.
             cache_attr: Name of the attribute to use to store the cache in the instance.
-            fileext: Extension of the file to use if the filename is None (thus is derived automatically from the function name).
+            fileext: Extension of the file to use if the filename is None (the function name is used as the filename).
         """
 
         def wrapper_fn(func):
@@ -246,49 +303,6 @@ class Cache:
             return fn
 
         return wrapper_fn
-
-    @staticmethod
-    def get_serde(cls: Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]]):
-        def ser(item: Union[SaveLoadProtocol, SaveLoadCompressedProtocol], file: Path):
-            return item.save(file)
-
-        def deser(file: Path):
-            return cls.load(file)
-
-        return {"ser": ser, "deser": deser}
-
-    @staticmethod
-    def get_tuple_serde(
-        classes: Sequence[
-            Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]]
-        ],
-        exts: Optional[list[str]] = None,
-    ):
-        def ser(items: Sequence[Optional[SaveLoadProtocol]], file: Path):
-            for i, item in enumerate(items):
-                if item is not None:
-                    ifile = file.parent / (
-                        file.name + f".{i}.{exts[i]}" if exts is not None else f".{i}"
-                    )
-                    item.save(ifile)
-            file.touch()
-
-        def deser(file: Path):
-            output = []
-            for i, cls in enumerate(classes):
-                ifile = file.parent / (
-                    file.name + f".{i}.{exts[i]}" if exts is not None else f".{i}"
-                )
-                if ifile.exists():
-                    output.append(cls.load(ifile))
-                else:
-                    output.append(None)
-            return tuple(output)
-
-        return {
-            "ser": ser,
-            "deser": deser,
-        }
 
 
 class CacheArgsHelper:

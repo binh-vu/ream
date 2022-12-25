@@ -1,5 +1,5 @@
 from __future__ import annotations
-import re
+import re, functools
 from typing import TypedDict, Dict, Optional, Tuple, List, Generic
 from loguru import logger
 from dataclasses import dataclass
@@ -9,9 +9,10 @@ RawSlice = TypedDict("Slice", value=int, is_percentage=bool, absolute_value=int)
 
 
 class DatasetDict(Dict[str, E]):
-    def __init__(self, name: str, subsets: Dict[str, E]):
+    def __init__(self, name: str, subsets: Dict[str, E], provenance: str = ""):
         super().__init__(subsets)
         self.name = name
+        self.provenance = provenance
 
 
 @dataclass
@@ -22,6 +23,7 @@ class DatasetQuery(Generic[E]):
     seed: Optional[int]
 
     @staticmethod
+    @functools.lru_cache(maxsize=1024)
     def from_string(query: str) -> DatasetQuery:
         """Query format:
         - <dataset>:(<subset>[<start>:<end>]+)*(:shuffle)?(:seed)?

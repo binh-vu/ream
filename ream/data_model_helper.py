@@ -389,8 +389,8 @@ class NumpyDataModelHelper:
             counter += size
 
         for prop, arr in arrays.items():
-            arrays[prop] = np.concatenate(arr)
-        arrays[metadata.index_props[0]] = index
+            arrays[prop] = np.concatenate(arr)  # type: ignore
+        arrays[metadata.index_props[0]] = index  # type: ignore
         return npmodels[0].__class__(**arrays)
 
     @classmethod

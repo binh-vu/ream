@@ -23,7 +23,7 @@ from loguru import logger
 from ream.fs import FS
 
 import serde.prelude as serde
-
+from timer import Timer
 from ream.helper import orjson_dumps
 from serde.helper import JsonSerde
 
@@ -42,6 +42,7 @@ class JLSerdeCache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
         cls: Optional[Type[JsonSerde]] = None,
+        log_serde_time: Optional[Callable[[str], None]] = None,
     ):
         return Cache.file(
             ser=serde.jl.ser,
@@ -53,6 +54,7 @@ class JLSerdeCache:
             mem_persist=mem_persist,
             cache_attr=cache_attr,
             fileext="jl",
+            log_serde_time=log_serde_time,
         )
 
 
@@ -65,6 +67,7 @@ class PickleSerdeCache:
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
         mem_persist: bool = False,
         cache_attr: str = "_cache",
+        log_serde_time: Optional[Callable[[str], None]] = None,
     ):
         return Cache.file(
             ser=serde.pickle.ser,
@@ -76,36 +79,41 @@ class PickleSerdeCache:
             mem_persist=mem_persist,
             cache_attr=cache_attr,
             fileext="pkl",
+            log_serde_time=log_serde_time,
         )
 
 
 class ClsSerdeCache:
-    """A cache that uses the save/load methods of a class as deser/ser functions"""
+    """A cache that uses the save/load methods of a class as deser/ser functions."""
 
     @staticmethod
     def file(
         cls: type[SaveLoadProtocol]  # type: ignore
         | type[SaveLoadCompressedProtocol]
         | Sequence[type[SaveLoadProtocol] | type[SaveLoadCompressedProtocol]],
-        fileext: str | list[str],
         cache_args: Optional[list[str]] = None,
         cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
         mem_persist: bool = False,
         cache_attr: str = "_cache",
+        fileext: Optional[str | list[str]] = None,
+        log_serde_time: Optional[Callable[[str], None]] = None,
     ):
         if isinstance(cls, Sequence):
-            if isinstance(fileext, list):
-                exts = fileext
+            if fileext is None:
+                exts = None
             else:
-                exts = [fileext] * len(cls)
-            fileext = "tuple"
+                if isinstance(fileext, list):
+                    exts = fileext
+                else:
+                    exts = [fileext] * len(cls)
+                fileext = "tuple"
             obj = ClsSerdeCache.get_tuple_serde(cls, exts)
             ser = obj["ser"]
             deser = obj["deser"]
         else:
-            assert isinstance(fileext, str)
+            assert fileext is None or isinstance(fileext, str)
             obj = ClsSerdeCache.get_serde(cls)
             ser = obj["ser"]
             deser = obj["deser"]
@@ -120,6 +128,7 @@ class ClsSerdeCache:
             mem_persist=mem_persist,
             cache_attr=cache_attr,
             fileext=fileext,
+            log_serde_time=log_serde_time,
         )
 
     @staticmethod
@@ -145,7 +154,7 @@ class ClsSerdeCache:
             for i, item in enumerate(items):
                 if item is not None:
                     ifile = file.parent / (
-                        file.name + f".{i}.{exts[i]}" if exts is not None else f".{i}"
+                        file.name + f"_{i}.{exts[i]}" if exts is not None else f"_{i}"
                     )
                     item.save(ifile)
             file.touch()
@@ -154,7 +163,7 @@ class ClsSerdeCache:
             output = []
             for i, cls in enumerate(classes):
                 ifile = file.parent / (
-                    file.name + f".{i}.{exts[i]}" if exts is not None else f".{i}"
+                    file.name + f"_{i}.{exts[i]}" if exts is not None else f"_{i}"
                 )
                 if ifile.exists():
                     output.append(cls.load(ifile))
@@ -230,6 +239,7 @@ class Cache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
         fileext: Optional[str] = None,
+        log_serde_time: Optional[Callable[[str], None]] = None,
     ) -> Callable:
         """Decorator to cache the result of a function to a file. The function must
         be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
@@ -252,6 +262,7 @@ class Cache:
             mem_persist: If True, the cache will also be stored in memory. This is a combination of mem and file cache.
             cache_attr: Name of the attribute to use to store the cache in the instance.
             fileext: Extension of the file to use if the filename is None (the function name is used as the filename).
+            log_serde_time: if not none, will be used to log the time it takes to deserialize the cache file.
         """
 
         def wrapper_fn(func):
@@ -291,11 +302,23 @@ class Cache:
                 )
 
                 if not cache_file.exists():
+                    output = func(self, *args, **kwargs)
                     with fs.acquire_write_lock(), cache_file.reserve_and_track() as fpath:
-                        output = func(self, *args, **kwargs)
-                        ser(output, fpath)
+                        if log_serde_time is not None:
+                            with Timer().watch_and_report(
+                                "serialize file", log_serde_time
+                            ):
+                                ser(output, fpath)
+                        else:
+                            ser(output, fpath)
                 else:
-                    output = deser(cache_file.get())
+                    if log_serde_time is not None:
+                        with Timer().watch_and_report(
+                            "deserialize file", log_serde_time
+                        ):
+                            output = deser(cache_file.get())
+                    else:
+                        output = deser(cache_file.get())
                 return output
 
             if mem_persist is not None:

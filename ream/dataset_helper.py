@@ -1,18 +1,77 @@
 from __future__ import annotations
-import re, functools
+import re, functools, orjson
 from typing import TypedDict, Dict, Optional, Tuple, List, Generic
 from loguru import logger
 from dataclasses import dataclass
 from ream.actors.interface import E
+from pathlib import Path
+from serde.helper import get_compression
+import serde.pickle
 
 RawSlice = TypedDict("Slice", value=int, is_percentage=bool, absolute_value=int)
 
 
 class DatasetDict(Dict[str, E]):
+    serde = (serde.pickle.ser, serde.pickle.deser, "pkl")
+
     def __init__(self, name: str, subsets: Dict[str, E], provenance: str = ""):
         super().__init__(subsets)
         self.name = name
         self.provenance = provenance
+
+    @classmethod
+    def molt(cls, obj: DatasetDict[E]):
+        """Change the class of the datasetdict without changing the underlying data. This is useful
+        because it relies on the class variable `serde` to determine how to serialize and deserialize examples
+        """
+        return cls(obj.name, dict(obj), obj.provenance)
+
+    def save(self, file: Path):
+        outdir = file.parent / file.stem
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        compression = get_compression(file)
+        if compression is not None:
+            compression = f".{compression}"
+            # save the file as cache helper requires the file to exist
+            file.touch()
+        else:
+            compression = ""
+        ext = f".{self.serde[2]}{compression}"
+
+        (outdir / f"metadata.json{compression}").write_bytes(
+            orjson.dumps({"name": self.name, "provenance": self.provenance})
+        )
+
+        for subset, ds in self.items():
+            filename = f"{subset if subset != '' else '_empty'}{ext}"
+            dsfile = outdir / filename
+            self.serde[0](ds, dsfile)
+
+    @classmethod
+    def load(cls, file: Path):
+        outdir = file.parent / file.stem
+
+        compression = get_compression(file)
+        if compression is not None:
+            compression = f".{compression}"
+        else:
+            compression = ""
+
+        metadata = orjson.loads((outdir / f"metadata.json{compression}").read_bytes())
+        name = metadata["name"]
+        provenance = metadata["provenance"]
+        ds = cls(name, {}, provenance)
+
+        ext = f".{cls.serde[2]}{compression}"
+
+        for dsfile in outdir.iterdir():
+            if dsfile.name.endswith(ext):
+                subset = dsfile.name[: -len(ext)]
+                if subset == "_empty":
+                    subset = ""
+                ds[subset] = cls.serde[1](dsfile)
+        return ds
 
 
 @dataclass

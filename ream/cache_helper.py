@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from inspect import Parameter, signature
-from collections import Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import (
     Any,

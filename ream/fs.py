@@ -60,13 +60,16 @@ class FS:
         if diskpath is None:
             diskpath = relpath
         pdiskpath = Path(diskpath)
-        ext = "".join(Path(diskpath).suffixes)
+        ext = "".join(
+            "." + slugify(suffix[1:]).replace("-", "_")
+            for suffix in Path(diskpath).suffixes
+        )
         pdiskpath = Path("").joinpath(
             *[
                 slugify(part, lowercase=False).replace("-", "_")
                 for part in pdiskpath.parent.parts
             ],
-            pdiskpath.name[: len(pdiskpath.name) - len(ext)],
+            slugify(pdiskpath.name.split(".", 1)[0]).replace("-", "_"),
         )
         pdiskpath = pdiskpath.parent / (pdiskpath.name + ext)
         diskpath = str(pdiskpath)

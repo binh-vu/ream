@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Mapping
 
 from dataclasses import dataclass, is_dataclass
 from inspect import Parameter, signature
@@ -33,7 +34,11 @@ ActorEdge = BaseEdge
 
 class ActorNode(BaseNode):
     def __init__(
-        self, id: int, cls: Type[BaseActor], cls_constructor: Optional[Callable] = None
+        self,
+        id: int,
+        cls: Type[BaseActor],
+        cls_constructor: Optional[Callable] = None,
+        namespace: str = "",
     ):
         self.id = id
         self.cls = cls
@@ -43,12 +48,18 @@ class ActorNode(BaseNode):
             self.cls_constructor = lambda params, dep_actors: cls(params, *dep_actors)
 
         self.clspath = get_classpath(cls)
+        # namespace is used to generate parser to parse actor node parameters
+        self.namespace = namespace
 
     @staticmethod
     def new(
-        type: Type[BaseActor], cls_constructor: Optional[Callable] = None
+        type: Type[BaseActor],
+        cls_constructor: Optional[Callable] = None,
+        namespace: str = "",
     ) -> "ActorNode":
-        return ActorNode(id=-1, cls=type, cls_constructor=cls_constructor)
+        return ActorNode(
+            id=-1, cls=type, cls_constructor=cls_constructor, namespace=namespace
+        )
 
     def has_short_name(self, name: str) -> bool:
         return self.clspath.endswith(name)
@@ -60,11 +71,12 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
         graph: ActorGraph
         main: ActorNode
         params_cls: Any
+        params_ns: list[str]
         node2param: Dict[Type, Tuple[int, int]]
         node2cls: Dict[Type, ActorNode]
 
         def get_params_parser(self) -> yada.YadaParser:
-            return yada.YadaParser(self.params_cls)
+            return yada.YadaParser(self.params_cls, namespaces=self.params_ns)
 
         def create_actor(self, params: List[DataClassInstance]) -> BaseActor:
             output = {}
@@ -117,29 +129,49 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
         return ActorGraph(check_cycle=True, multigraph=False)
 
     @staticmethod
-    def auto(actor_cls: Sequence[Type[BaseActor]], strict: bool = False) -> ActorGraph:
+    def auto(
+        actor_cls: Union[Sequence[Type[BaseActor]], Mapping[str, Type[BaseActor]]],
+        strict: bool = False,
+        namespaces: Optional[Sequence[str]] = None,
+    ) -> ActorGraph:
         """Automatically create an actor graph from list of actor classes.
 
         For each actor class, its dependent actors are discovered by inspecting arguments of the actor's init function.
         If type hint's of an argument is Actor or subclass of Actor, it must be in the list of given actors, and a dependency edge between them is created.
 
         Args:
-            actor_cls: List of actor classes
+            actor_cls: List of actor classes or a mapping of actor classes. If a mapping is given, the key is used as namespace for the actor parameter parser.
+
             strict: whether to enforce all parameters of actor's init function must be type hinted.
+
+            namespaces: List of namespaces to be used for actor parameter parser. If None, there is no namespace. Only works if actor_cls is a sequence. The
+                reason we need this is for some actors, we want to use a global namespace ""
 
         Returns:
             ActorGraph
         """
         g = ActorGraph.new()
         idmap = {}
-        for cls in actor_cls:
-            if cls in idmap:
-                raise ValueError(
-                    f"Auto graph construction cannot handle duplicated actor class. Found one: {cls}"
-                )
-            idmap[cls] = g.add_node(ActorNode.new(cls))
+        if isinstance(actor_cls, Mapping):
+            for ns, cls in actor_cls.items():
+                if cls in idmap:
+                    raise ValueError(
+                        f"Auto graph construction cannot handle duplicated actor class. Found one: {cls}"
+                    )
+                idmap[cls] = g.add_node(ActorNode.new(cls, namespace=ns))
+        else:
+            for i, cls in enumerate(actor_cls):
+                if cls in idmap:
+                    raise ValueError(
+                        f"Auto graph construction cannot handle duplicated actor class. Found one: {cls}"
+                    )
 
-        for cls in actor_cls:
+                namespace = namespaces[i] if namespaces is not None else ""
+                idmap[cls] = g.add_node(ActorNode.new(cls, namespace=namespace))
+
+        for cls in (
+            actor_cls if not isinstance(actor_cls, Mapping) else actor_cls.values()
+        ):
             i = 0
             argtypes = get_type_hints(cls.__init__)
             for i, name in enumerate(signature(cls.__init__).parameters.keys()):
@@ -252,6 +284,7 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
     def get_actor_constructor(self, actor_node: ActorNode) -> ActorConstructor:
         nodes = {}
         params_cls: List[Any] = []
+        params_ns: List[str] = []
         node2param: Dict[Type, Tuple[int, int]] = {}
         for node in self.ancestors(actor_node.id) + [actor_node]:
             if node.cls in nodes:
@@ -266,6 +299,7 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
                     len(params_cls) + len(node_param_cls),
                 )
                 params_cls.extend(node_param_cls)
+                params_ns.extend([node.namespace] * len(node_param_cls))
             else:
                 if not is_dataclass(node_param_cls):
                     raise TypeError(
@@ -273,11 +307,13 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
                     )
                 node2param[node.cls] = (len(params_cls), len(params_cls) + 1)
                 params_cls.append(node_param_cls)
+                params_ns.append(node.namespace)
 
         return ActorGraph.ActorConstructor(
             graph=self,
             main=actor_node,
             params_cls=params_cls,
+            params_ns=params_ns,
             node2param=node2param,
             node2cls=nodes,
         )

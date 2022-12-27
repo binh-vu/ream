@@ -42,10 +42,10 @@ def orjson_dumps(obj, **kwargs):
 
 
 def _logger_formatter_colorful(record):
-    clsname = "{extra[cls]}." if "cls" in record["extra"] else ""
+    name = "<cyan>{extra[name]}</cyan>:" if "name" in record["extra"] else ""
     return (
-        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>%s{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>\n{exception}"
-        % clsname
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | %s<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>\n{exception}"
+        % name
     )
 
 

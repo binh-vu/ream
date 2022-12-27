@@ -75,7 +75,7 @@ class DatasetDict(Dict[str, E]):
 
 
 @dataclass
-class DatasetQuery(Generic[E]):
+class DatasetQuery:
     dataset: str
     subsets: Dict[str, Tuple[RawSlice, RawSlice]]
     shuffle: bool

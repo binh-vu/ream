@@ -30,7 +30,7 @@ class BaseActor(Generic[E, P], Actor[E]):
         self._working_fs: Optional[FS] = None
         self.dep_actors: List[BaseActor] = dep_actors or []
         self.params = params
-        self.logger = logger.bind(cls=self.__class__.__name__)
+        self.logger = logger.bind(name=self.__class__.__name__)
 
     def get_actor_state(self) -> ActorState:
         """Get the state of this actor"""

@@ -20,6 +20,7 @@ from typing import (
 )
 from typing_extensions import Self
 from loguru import logger
+from loguru._logger import Logger
 from ream.fs import FS
 
 import serde.prelude as serde
@@ -42,7 +43,8 @@ class JLSerdeCache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
         cls: Optional[Type[JsonSerde]] = None,
-        log_serde_time: Optional[Callable[[str], None]] = None,
+        log_serde_time: bool = False,
+        disable: bool = False,
     ):
         return Cache.file(
             ser=serde.jl.ser,
@@ -55,6 +57,7 @@ class JLSerdeCache:
             cache_attr=cache_attr,
             fileext="jl",
             log_serde_time=log_serde_time,
+            disable=disable,
         )
 
 
@@ -67,7 +70,8 @@ class PickleSerdeCache:
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
         mem_persist: bool = False,
         cache_attr: str = "_cache",
-        log_serde_time: Optional[Callable[[str], None]] = None,
+        log_serde_time: bool = False,
+        disable: bool = False,
     ):
         return Cache.file(
             ser=serde.pickle.ser,
@@ -80,6 +84,7 @@ class PickleSerdeCache:
             cache_attr=cache_attr,
             fileext="pkl",
             log_serde_time=log_serde_time,
+            disable=disable,
         )
 
 
@@ -98,7 +103,8 @@ class ClsSerdeCache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
         fileext: Optional[str | list[str]] = None,
-        log_serde_time: Optional[Callable[[str], None]] = None,
+        log_serde_time: bool = False,
+        disable: bool = False,
     ):
         if isinstance(cls, Sequence):
             if fileext is None:
@@ -129,6 +135,7 @@ class ClsSerdeCache:
             cache_attr=cache_attr,
             fileext=fileext,
             log_serde_time=log_serde_time,
+            disable=disable,
         )
 
     @staticmethod
@@ -187,17 +194,21 @@ class Cache:
         cache_args: Optional[list[str]] = None,
         cache_key: Optional[CacheKeyFn] = None,
         cache_attr: str = "_cache",
+        disable: bool = False,
     ):
         """Decorator to cache the result of a function to an attribute in the instance in memory.
 
         Note: It does not support function with variable number of arguments.
 
         Args:
-            cache_args: list of arguments to use for the cache key. If None, all arguments are used.
+            cache_args: list of arguments to use for the default cache key function. If None, all arguments are used.
             cache_key: Function to use to generate the cache key. If None, the default is used. The default function
                 only support arguments of types str, int, bool, and None.
             cache_attr: Name of the attribute to use to store the cache in the instance.
+            disable: If True, the cache is disabled.
         """
+        if disable:
+            return lambda func: func
 
         def wrapper_fn(func):
             func_name = func.__name__
@@ -239,7 +250,8 @@ class Cache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
         fileext: Optional[str] = None,
-        log_serde_time: Optional[Callable[[str], None]] = None,
+        log_serde_time: bool = False,
+        disable: bool = False,
     ) -> Callable:
         """Decorator to cache the result of a function to a file. The function must
         be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
@@ -250,7 +262,7 @@ class Cache:
         Args:
             ser: A function to serialize the output of the function to a file.
             deser: A function to deserialize the output of the function from a file.
-            cache_args: list of arguments to use for the cache key. If None, all arguments are used. If cache_key is provided
+            cache_args: list of arguments to use for the default cache key function. If None, all arguments are used. If cache_key is provided
                 this argument is ignored.
             cache_key: Function to use to generate the cache key. If None, the default is used. The default function
                 only support arguments of types str, int, bool, and None.
@@ -262,8 +274,11 @@ class Cache:
             mem_persist: If True, the cache will also be stored in memory. This is a combination of mem and file cache.
             cache_attr: Name of the attribute to use to store the cache in the instance.
             fileext: Extension of the file to use if the filename is None (the function name is used as the filename).
-            log_serde_time: if not none, will be used to log the time it takes to deserialize the cache file.
+            log_serde_time: if True, will log the time it takes to deserialize the cache file.
+            disable: if True, the cache is disabled.
         """
+        if disable:
+            return lambda func: func
 
         def wrapper_fn(func):
             if filename is None:
@@ -304,17 +319,18 @@ class Cache:
                 if not cache_file.exists():
                     output = func(self, *args, **kwargs)
                     with fs.acquire_write_lock(), cache_file.reserve_and_track() as fpath:
-                        if log_serde_time is not None:
+                        if log_serde_time:
                             with Timer().watch_and_report(
-                                "serialize file", log_serde_time
+                                f"serialize file {cache_file.relpath}",
+                                self.logger.debug,
                             ):
                                 ser(output, fpath)
                         else:
                             ser(output, fpath)
                 else:
-                    if log_serde_time is not None:
+                    if log_serde_time:
                         with Timer().watch_and_report(
-                            "deserialize file", log_serde_time
+                            f"deserialize file {cache_file.relpath}", self.logger.debug
                         ):
                             output = deser(cache_file.get())
                     else:
@@ -433,6 +449,8 @@ class CacheArgsHelper:
 
 
 class HasWorkingFsTrait(Protocol):
+    logger: Logger
+
     def get_working_fs(self) -> FS:
         ...
 
@@ -442,6 +460,7 @@ class Cacheable:
 
     def __init__(self, workdir: Path):
         self.workdir = FS(workdir)
+        self.logger = logger.bind(name=self.__class__.__name__)
 
     def get_working_fs(self) -> FS:
         return self.workdir

@@ -17,10 +17,10 @@ from typing import (
     get_origin,
     get_type_hints,
     Sequence,
+    TYPE_CHECKING,
 )
 from typing_extensions import Self
 from loguru import logger
-from loguru._logger import Logger
 from ream.fs import FS
 
 import serde.prelude as serde
@@ -32,11 +32,15 @@ NoneType = type(None)
 # arguments are (self, *args, **kwargs)
 CacheKeyFn = Callable[..., bytes]
 
+if TYPE_CHECKING:
+    from loguru import Logger
+
 
 class JLSerdeCache:
     @staticmethod
     def file(
         cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
         cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
@@ -50,6 +54,7 @@ class JLSerdeCache:
             ser=serde.jl.ser,
             deser=functools.partial(serde.jl.deser, cls=cls),
             cache_args=cache_args,
+            cache_self_args=cache_self_args,
             cache_key=cache_key,
             filename=filename,
             compression=compression,
@@ -65,6 +70,7 @@ class PickleSerdeCache:
     @staticmethod
     def file(
         cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
         cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
@@ -77,6 +83,7 @@ class PickleSerdeCache:
             ser=serde.pickle.ser,
             deser=serde.pickle.deser,
             cache_args=cache_args,
+            cache_self_args=cache_self_args,
             cache_key=cache_key,
             filename=filename,
             compression=compression,
@@ -97,6 +104,7 @@ class ClsSerdeCache:
         | type[SaveLoadCompressedProtocol]
         | Sequence[type[SaveLoadProtocol] | type[SaveLoadCompressedProtocol]],
         cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
         cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
@@ -128,6 +136,7 @@ class ClsSerdeCache:
             ser=ser,
             deser=deser,
             cache_args=cache_args,
+            cache_self_args=cache_self_args,
             cache_key=cache_key,
             filename=filename,
             compression=compression,
@@ -192,6 +201,7 @@ class Cache:
     @staticmethod
     def mem(
         cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
         cache_key: Optional[CacheKeyFn] = None,
         cache_attr: str = "_cache",
         disable: bool = False,
@@ -202,6 +212,8 @@ class Cache:
 
         Args:
             cache_args: list of arguments to use for the default cache key function. If None, all arguments are used.
+            cache_self_args: extra arguments that are derived from the instance to use for the default cache key
+                function. If cache_key is provided this argument is ignored.
             cache_key: Function to use to generate the cache key. If None, the default is used. The default function
                 only support arguments of types str, int, bool, and None.
             cache_attr: Name of the attribute to use to store the cache in the instance.
@@ -215,13 +227,15 @@ class Cache:
             cache_args_helper = CacheArgsHelper(func)
             if cache_args is not None:
                 cache_args_helper.keep_args(cache_args)
+            if cache_self_args is not None:
+                cache_args_helper.set_self_args(cache_self_args)
 
             keyfn = cache_key
             if keyfn is None:
                 cache_args_helper.ensure_auto_cache_key_friendly()
                 keyfn = (
                     lambda self, *args, **kwargs: cache_args_helper.get_args_as_tuple(
-                        *args, **kwargs
+                        self, *args, **kwargs
                     )
                 )
 
@@ -244,6 +258,7 @@ class Cache:
         ser: Callable[[Any, Path], None],
         deser: Callable[[Path], Any],
         cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
         cache_key: Optional[CacheKeyFn] = None,
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
@@ -264,6 +279,8 @@ class Cache:
             deser: A function to deserialize the output of the function from a file.
             cache_args: list of arguments to use for the default cache key function. If None, all arguments are used. If cache_key is provided
                 this argument is ignored.
+            cache_self_args: extra arguments that are derived from the instance to use for the default cache key
+                function. If cache_key is provided this argument is ignored.
             cache_key: Function to use to generate the cache key. If None, the default is used. The default function
                 only support arguments of types str, int, bool, and None.
             filename: Filename to use for the cache file. If None, the name of the function is used. If it is a function,
@@ -296,11 +313,14 @@ class Cache:
             if cache_args is not None:
                 cache_args_helper.keep_args(cache_args)
 
+            if cache_self_args is not None:
+                cache_args_helper.set_self_args(cache_self_args)
+
             keyfn = cache_key
             if keyfn is None:
                 cache_args_helper.ensure_auto_cache_key_friendly()
                 keyfn = lambda self, *args, **kwargs: orjson_dumps(
-                    cache_args_helper.get_args(*args, **kwargs)
+                    cache_args_helper.get_args(self, *args, **kwargs)
                 )
 
             @functools.wraps(func)
@@ -338,7 +358,12 @@ class Cache:
                 return output
 
             if mem_persist is not None:
-                return Cache.mem(cache_args, cache_key, cache_attr)(fn)
+                return Cache.mem(
+                    cache_args=cache_args,
+                    cache_self_args=cache_self_args,
+                    cache_key=cache_key,
+                    cache_attr=cache_attr,
+                )(fn)
             return fn
 
         return wrapper_fn
@@ -375,9 +400,13 @@ class CacheArgsHelper:
         self.args.pop("self")
         self.argnames: list[str] = list(self.args.keys())
         self.cache_args = self.argnames
+        self.cache_self_args = None
 
     def keep_args(self, names: Iterable[str]) -> None:
         self.cache_args = list(names)
+
+    def set_self_args(self, self_args: Optional[Callable[..., dict]]) -> None:
+        self.cache_self_args = self_args
 
     def get_cache_argtypes(self) -> dict[str, Optional[Type]]:
         return {name: self.argtypes[name] for name in self.cache_args}
@@ -430,7 +459,7 @@ class CacheArgsHelper:
                     f"Automatically generating caching key to cache a function call requires all arguments to be one of type: str, int, bool, or None. Found {name} with type {argtype}"
                 )
 
-    def get_args(self, *args, **kwargs) -> dict:
+    def get_args(self, obj: HasWorkingFsTrait, *args, **kwargs) -> dict:
         # TODO: improve me!
         out = {name: value for name, value in zip(self.args, args)}
         out.update(
@@ -441,11 +470,37 @@ class CacheArgsHelper:
         )
         if len(self.cache_args) != len(self.argnames):
             out = {name: out[name] for name in self.cache_args}
+
+        if self.cache_self_args is not None:
+            out.update(self.cache_self_args(obj))
         return out
 
-    def get_args_as_tuple(self, *args, **kwargs) -> tuple:
+    def get_args_as_tuple(self, obj: HasWorkingFsTrait, *args, **kwargs) -> tuple:
         # TODO: improve me!
-        return tuple(self.get_args(*args, **kwargs).values())
+        return tuple(self.get_args(obj, *args, **kwargs).values())
+
+    @staticmethod
+    def gen_cache_self_args(
+        *attrs: Union[str, Callable[[Any], Union[str, bool, int, None]]]
+    ):
+        """Generate a function that returns a dictionary of arguments extracted from self.
+
+        Args:
+            *attrs: a list of attributes of self to be extracted.
+                - If an attribute is a string, it is property of self, and the value is obtained by getattr(self, attr).
+                - If an attribute is a callable, it is a no-argument method of self, and the value is obtained by
+                  attr(self). To specify a method of self in the decorator, just use `method_a` instead of `Class.method_a`,
+                  and the method must be defined before the decorator is called.
+        """
+        props = [attr for attr in attrs if isinstance(attr, str)]
+        funcs = [attr for attr in attrs if callable(attr)]
+
+        def get_self_args(self):
+            args = {name: getattr(self, name) for name in props}
+            args.update({func.__name__: func(self) for func in funcs})
+            return args
+
+        return get_self_args
 
 
 class HasWorkingFsTrait(Protocol):

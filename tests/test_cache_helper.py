@@ -76,56 +76,63 @@ class TestCacheArgsHelper:
         }
 
     def test_get_args(self):
+        obj = CandidateGeneration(NoParams())
         helper = CacheArgsHelper(CandidateGeneration.algo1)
-        assert helper.get_args("test", 10) == {
+
+        assert helper.get_args(obj, "test", 10) == {
             "dataset": "test",
             "topk": 10,
             "seed": Parameter.empty,
         }
-        assert helper.get_args("test", seed=10) == {
+        assert helper.get_args(obj, "test", seed=10) == {
             "dataset": "test",
             "topk": Parameter.empty,
             "seed": 10,
         }
-        assert helper.get_args(dataset="test", seed=10) == {
+        assert helper.get_args(obj, dataset="test", seed=10) == {
             "dataset": "test",
             "topk": Parameter.empty,
             "seed": 10,
         }
-        assert helper.get_args(seed=10, dataset="test") == {
+        assert helper.get_args(obj, seed=10, dataset="test") == {
             "dataset": "test",
             "topk": Parameter.empty,
             "seed": 10,
         }
 
         helper.keep_args(["dataset", "seed"])
-        assert helper.get_args("test", 10) == {
+        assert helper.get_args(obj, "test", 10) == {
             "dataset": "test",
             "seed": Parameter.empty,
         }
-        assert helper.get_args("test", 4, 10) == {
+        assert helper.get_args(obj, "test", 4, 10) == {
             "dataset": "test",
             "seed": 10,
         }
 
     def test_get_args_as_tuple(self):
+        obj = CandidateGeneration(NoParams())
         helper = CacheArgsHelper(CandidateGeneration.algo1)
-        assert helper.get_args_as_tuple("test", 10) == ("test", 10, Parameter.empty)
-        assert helper.get_args_as_tuple("test", seed=10) == (
+        assert helper.get_args_as_tuple(obj, "test", 10) == (
+            "test",
+            10,
+            Parameter.empty,
+        )
+        assert helper.get_args_as_tuple(obj, "test", seed=10) == (
             "test",
             Parameter.empty,
             10,
         )
-        assert helper.get_args_as_tuple(dataset="test", seed=10) == (
+        assert helper.get_args_as_tuple(obj, dataset="test", seed=10) == (
             "test",
             Parameter.empty,
             10,
         )
-        assert helper.get_args_as_tuple(seed=10, dataset="test") == (
+        assert helper.get_args_as_tuple(obj, seed=10, dataset="test") == (
             "test",
             Parameter.empty,
             10,
         )
 
         helper.keep_args(["dataset", "seed"])
-        assert helper.get_args_as_tuple("test", 10) == ("test", Parameter.empty)
+        assert helper.get_args_as_tuple(obj, "test", 10) == ("test", Parameter.empty)

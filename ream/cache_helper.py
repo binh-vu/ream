@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import functools
+import gzip
+import bz2
 from inspect import Parameter, signature
 from collections.abc import Sequence
 from pathlib import Path
@@ -19,6 +21,7 @@ from typing import (
     Sequence,
     TYPE_CHECKING,
 )
+import pickle
 from typing_extensions import Self
 from loguru import logger
 from ream.fs import FS
@@ -27,6 +30,13 @@ import serde.prelude as serde
 from timer import Timer
 from ream.helper import orjson_dumps
 from serde.helper import JsonSerde
+from hugedict.sqlitedict import SqliteDict, SqliteDictKeyType
+from hugedict.misc import identity, Chain2
+
+try:
+    import lz4.frame as lz4_frame  # type: ignore
+except ImportError:
+    lz4_frame = None
 
 NoneType = type(None)
 # arguments are (self, *args, **kwargs)
@@ -90,6 +100,30 @@ class PickleSerdeCache:
             mem_persist=mem_persist,
             cache_attr=cache_attr,
             fileext="pkl",
+            log_serde_time=log_serde_time,
+            disable=disable,
+        )
+
+    @staticmethod
+    def sqlite(
+        cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
+        compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
+        mem_persist: bool = False,
+        cache_attr: str = "_cache",
+        log_serde_time: bool = False,
+        disable: bool = False,
+    ):
+        return Cache.sqlite(
+            ser=pickle.dumps,
+            deser=pickle.loads,
+            cache_args=cache_args,
+            cache_self_args=cache_self_args,
+            cache_key=cache_key,
+            compression=compression,
+            mem_persist=mem_persist,
+            cache_attr=cache_attr,
             log_serde_time=log_serde_time,
             disable=disable,
         )
@@ -220,7 +254,7 @@ class Cache:
             disable: If True, the cache is disabled.
         """
         if disable:
-            return lambda func: func
+            return identity
 
         def wrapper_fn(func):
             func_name = func.__name__
@@ -355,6 +389,131 @@ class Cache:
                             output = deser(cache_file.get())
                     else:
                         output = deser(cache_file.get())
+                return output
+
+            if mem_persist is not None:
+                return Cache.mem(
+                    cache_args=cache_args,
+                    cache_self_args=cache_self_args,
+                    cache_key=cache_key,
+                    cache_attr=cache_attr,
+                )(fn)
+            return fn
+
+        return wrapper_fn
+
+    @staticmethod
+    def sqlite(
+        ser: Callable[[Any], bytes],
+        deser: Callable[[bytes], Any],
+        cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
+        compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
+        mem_persist: bool = False,
+        cache_attr: str = "_cache",
+        log_serde_time: bool = False,
+        disable: bool = False,
+    ):
+        """Decorator to cache the result of a function to a record in a sqlite database. The function must
+        be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
+        the directory to store the sqlite database.
+
+        Note: It does not support function with variable number of arguments.
+
+        Args:
+            ser: A function to serialize the output of the function to bytes.
+            deser: A function to deserialize the output of the function from bytes.
+            cache_args: list of arguments to use for the default cache key function. If None, all arguments are used. If cache_key is provided
+                this argument is ignored.
+            cache_self_args: extra arguments that are derived from the instance to use for the default cache key
+                function. If cache_key is provided this argument is ignored.
+            cache_key: Function to use to generate the cache key. If None, the default is used. The default function
+                only support arguments of types str, int, bool, and None.
+            compression: whether to compress the binary.
+            mem_persist: If True, the cache will also be stored in memory. This is a combination of mem and file cache.
+            cache_attr: Name of the attribute to use to store the cache in the instance.
+            log_serde_time: if True, will log the time it takes to fetch and deserialize the binary data.
+            disable: if True, the cache is disabled.
+        """
+        if disable:
+            return identity
+
+        if compression == "gz":
+            ser = lambda x: gzip.compress(ser(x), mtime=0)
+            deser = lambda x: deser(gzip.decompress(x))
+        elif compression == "bz2":
+            ser = lambda x: bz2.compress(ser(x))
+            deser = lambda x: deser(bz2.decompress(x))
+        elif compression == "lz4":
+            if lz4_frame is None:
+                raise ValueError("lz4 is not installed")
+            # using lambda somehow terminate the program without raising an error
+            ser = Chain2(lz4_frame.compress, ser)
+            deser = Chain2(deser, lz4_frame.decompress)
+
+        def wrapper_fn(func):
+            cache_args_helper = CacheArgsHelper(func)
+            if cache_args is not None:
+                cache_args_helper.keep_args(cache_args)
+
+            if cache_self_args is not None:
+                cache_args_helper.set_self_args(cache_self_args)
+
+            keyfn = cache_key
+            if keyfn is None:
+                cache_args_helper.ensure_auto_cache_key_friendly()
+                keyfn = lambda self, *args, **kwargs: orjson_dumps(
+                    cache_args_helper.get_args(self, *args, **kwargs)
+                )
+
+            fname = func.__name__
+            dbname = f"{fname}.db"
+            dbattr = f"__sqlite_{fname}"
+
+            @functools.wraps(func)
+            def fn(self: HasWorkingFsTrait, *args, **kwargs):
+                fs = self.get_working_fs()
+                if not hasattr(self, dbattr):
+                    sqlitedict = SqliteDict(
+                        fs.root / dbname,
+                        keytype=SqliteDictKeyType.bytes,
+                        ser_value=identity,
+                        deser_value=identity,
+                    )
+                    setattr(self, dbattr, sqlitedict)
+                else:
+                    sqlitedict = getattr(self, dbattr)
+
+                key = keyfn(self, *args, **kwargs)
+
+                if key not in sqlitedict:
+                    output = func(self, *args, **kwargs)
+                    if log_serde_time:
+                        timer = Timer()
+                        with timer.watch_and_report(
+                            f"[{fname}] serialize output", self.logger.debug
+                        ):
+                            ser_output = ser(output)
+                        with timer.watch_and_report(
+                            f"[{fname}] save to db", self.logger.debug
+                        ):
+                            sqlitedict[key] = ser_output
+                    else:
+                        sqlitedict[key] = ser(output)
+                else:
+                    if log_serde_time:
+                        timer = Timer()
+                        with timer.watch_and_report(
+                            f"[{fname}] load from db", self.logger.debug
+                        ):
+                            ser_output = sqlitedict[key]
+                        with timer.watch_and_report(
+                            f"[{fname}] deserialize output", self.logger.debug
+                        ):
+                            output = deser(ser_output)
+                    else:
+                        output = deser(sqlitedict[key])
                 return output
 
             if mem_persist is not None:

@@ -60,6 +60,8 @@ def _logger_formatter(record):
 def _orjson_default(obj):
     if isinstance(obj, Path):
         return str(obj)
+    if isinstance(obj, set):
+        return list(obj)
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 

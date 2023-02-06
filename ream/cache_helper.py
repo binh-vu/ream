@@ -58,7 +58,7 @@ class JLSerdeCache:
         cache_attr: str = "_cache",
         cls: Optional[Type[JsonSerde]] = None,
         log_serde_time: bool = False,
-        disable: bool = False,
+        disable: bool | str | Callable[[Any], bool] = False,
     ):
         return Cache.file(
             ser=serde.jl.ser,
@@ -87,7 +87,7 @@ class PickleSerdeCache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
         log_serde_time: bool = False,
-        disable: bool = False,
+        disable: bool | str | Callable[[Any], bool] = False,
     ):
         return Cache.file(
             ser=serde.pickle.ser,
@@ -113,7 +113,7 @@ class PickleSerdeCache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
         log_serde_time: bool = False,
-        disable: bool = False,
+        disable: bool | str | Callable[[Any], bool] = False,
     ):
         return Cache.sqlite(
             ser=pickle.dumps,
@@ -146,7 +146,7 @@ class ClsSerdeCache:
         cache_attr: str = "_cache",
         fileext: Optional[str | list[str]] = None,
         log_serde_time: bool = False,
-        disable: bool = False,
+        disable: bool | str | Callable[[Any], bool] = False,
     ):
         if isinstance(cls, Sequence):
             if fileext is None:
@@ -238,7 +238,7 @@ class Cache:
         cache_self_args: Optional[Callable[..., dict]] = None,
         cache_key: Optional[CacheKeyFn] = None,
         cache_attr: str = "_cache",
-        disable: bool = False,
+        disable: bool | str | Callable[[Any], bool] = False,
     ):
         """Decorator to cache the result of a function to an attribute in the instance in memory.
 
@@ -251,9 +251,9 @@ class Cache:
             cache_key: Function to use to generate the cache key. If None, the default is used. The default function
                 only support arguments of types str, int, bool, and None.
             cache_attr: Name of the attribute to use to store the cache in the instance.
-            disable: If True, the cache is disabled.
+            disable: if True (either bool or an attribute (bool type) or a function called with self returning bool), the cache is disabled.
         """
-        if disable:
+        if isinstance(disable, bool) and disable:
             return identity
 
         def wrapper_fn(func):
@@ -275,6 +275,15 @@ class Cache:
 
             @functools.wraps(func)
             def fn(self, *args, **kwargs):
+                if not isinstance(disable, bool):
+                    is_disable = (
+                        getattr(self, disable)
+                        if isinstance(disable, str)
+                        else disable(self)
+                    )
+                    if is_disable:
+                        return func(self, *args, **kwargs)
+
                 if not hasattr(self, cache_attr):
                     setattr(self, cache_attr, {})
                 cache = getattr(self, cache_attr)
@@ -300,7 +309,7 @@ class Cache:
         cache_attr: str = "_cache",
         fileext: Optional[str] = None,
         log_serde_time: bool = False,
-        disable: bool = False,
+        disable: bool | str | Callable[[Any], bool] = False,
     ) -> Callable:
         """Decorator to cache the result of a function to a file. The function must
         be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
@@ -326,10 +335,10 @@ class Cache:
             cache_attr: Name of the attribute to use to store the cache in the instance.
             fileext: Extension of the file to use if the filename is None (the function name is used as the filename).
             log_serde_time: if True, will log the time it takes to deserialize the cache file.
-            disable: if True, the cache is disabled.
+            disable: if True (either bool or an attribute (bool type) or a function called with self returning bool), the cache is disabled.
         """
-        if disable:
-            return lambda func: func
+        if isinstance(disable, bool) and disable:
+            return identity
 
         def wrapper_fn(func):
             if filename is None:
@@ -359,6 +368,15 @@ class Cache:
 
             @functools.wraps(func)
             def fn(self: HasWorkingFsTrait, *args, **kwargs):
+                if not isinstance(disable, bool):
+                    is_disable = (
+                        getattr(self, disable)
+                        if isinstance(disable, str)
+                        else disable(self)
+                    )
+                    if is_disable:
+                        return func(self, *args, **kwargs)
+
                 fs = self.get_working_fs()
 
                 if isinstance(filename2, str):
@@ -413,7 +431,7 @@ class Cache:
         mem_persist: bool = False,
         cache_attr: str = "_cache",
         log_serde_time: bool = False,
-        disable: bool = False,
+        disable: bool | str | Callable[[Any], bool] = False,
     ):
         """Decorator to cache the result of a function to a record in a sqlite database. The function must
         be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
@@ -434,9 +452,9 @@ class Cache:
             mem_persist: If True, the cache will also be stored in memory. This is a combination of mem and file cache.
             cache_attr: Name of the attribute to use to store the cache in the instance.
             log_serde_time: if True, will log the time it takes to fetch and deserialize the binary data.
-            disable: if True, the cache is disabled.
+            disable: if True (either bool or an attribute (bool type) or a function called with self returning bool), the cache is disabled.
         """
-        if disable:
+        if isinstance(disable, bool) and disable:
             return identity
 
         if compression == "gz":
@@ -473,6 +491,15 @@ class Cache:
 
             @functools.wraps(func)
             def fn(self: HasWorkingFsTrait, *args, **kwargs):
+                if not isinstance(disable, bool):
+                    is_disable = (
+                        getattr(self, disable)
+                        if isinstance(disable, str)
+                        else disable(self)
+                    )
+                    if is_disable:
+                        return func(self, *args, **kwargs)
+
                 fs = self.get_working_fs()
                 if not hasattr(self, dbattr):
                     sqlitedict = SqliteDict(

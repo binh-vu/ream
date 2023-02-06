@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ream2"
-version = "1.8.0"
+version = "1.8.1"
 description = "An actor architecture for research software"
 authors = ["Binh Vu <binh@toan2.com>"]
 license = "MIT"
@@ -14,7 +14,7 @@ packages = [
 [tool.poetry.dependencies]
 python = "^3.8"
 t2-yada = "^1.1.0"
-timer4 = "^1.0.2"
+timer4 = ">= 1.0.4, < 2.0.0"
 loguru = "^0.6.0"
 graph-wrapper = "^1.5.0"
 filelock = "^3.8.0"

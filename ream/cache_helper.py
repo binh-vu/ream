@@ -236,7 +236,7 @@ class Cache:
     def mem(
         cache_args: Optional[list[str]] = None,
         cache_self_args: Optional[Callable[..., dict]] = None,
-        cache_key: Optional[CacheKeyFn] = None,
+        cache_key: Optional[CacheKeyFn | Callable[..., tuple]] = None,
         cache_attr: str = "_cache",
         disable: bool | str | Callable[[Any], bool] = False,
     ):

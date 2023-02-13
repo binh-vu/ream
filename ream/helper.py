@@ -61,7 +61,8 @@ def _orjson_default(obj):
     if isinstance(obj, Path):
         return str(obj)
     if isinstance(obj, set):
-        return list(obj)
+        # so that the order is deterministic, and we can compare actor state by its serialized JSON
+        return sorted(obj)
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 

@@ -29,7 +29,7 @@ from ream.fs import FS
 import serde.prelude as serde
 from timer import Timer
 from ream.helper import orjson_dumps
-from serde.helper import JsonSerde
+from serde.helper import AVAILABLE_COMPRESSIONS, JsonSerde
 from hugedict.sqlitedict import SqliteDict, SqliteDictKeyType
 from hugedict.misc import identity, Chain2
 
@@ -134,9 +134,7 @@ class ClsSerdeCache:
 
     @staticmethod
     def file(
-        cls: type[SaveLoadProtocol]  # type: ignore
-        | type[SaveLoadCompressedProtocol]
-        | Sequence[type[SaveLoadProtocol] | type[SaveLoadCompressedProtocol]],
+        cls: type[SaveLoadProtocol] | Sequence[type[SaveLoadProtocol]],  # type: ignore
         cache_args: Optional[list[str]] = None,
         cache_self_args: Optional[Callable[..., dict]] = None,
         cache_key: Optional[CacheKeyFn] = None,
@@ -182,41 +180,91 @@ class ClsSerdeCache:
         )
 
     @staticmethod
-    def get_serde(
-        klass: Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]]
+    def dir(
+        cls: type[SaveLoadDirProtocol] | Sequence[type[SaveLoadDirProtocol]],  # type: ignore
+        cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
+        dirname: Optional[Union[str, Callable[..., str]]] = None,
+        compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
+        mem_persist: bool = False,
+        cache_attr: str = "_cache",
+        log_serde_time: bool = False,
+        disable: bool | str | Callable[[Any], bool] = False,
     ):
-        def ser(item: Union[SaveLoadProtocol, SaveLoadCompressedProtocol], file: Path):
-            return item.save(file)
+        if isinstance(cls, Sequence):
+            obj = ClsSerdeCache.get_tuple_serde(cls, None)
+            ser = obj["ser"]
+            deser = obj["deser"]
+        else:
+            obj = ClsSerdeCache.get_serde(cls)
+            ser = obj["ser"]
+            deser = obj["deser"]
 
-        def deser(file: Path):
-            return klass.load(file)
+        return Cache.dir(
+            ser=ser,
+            deser=deser,
+            cache_args=cache_args,
+            cache_self_args=cache_self_args,
+            cache_key=cache_key,
+            dirname=dirname,
+            compression=compression,
+            mem_persist=mem_persist,
+            cache_attr=cache_attr,
+            log_serde_time=log_serde_time,
+            disable=disable,
+        )
+
+    @staticmethod
+    def get_serde(
+        klass: Union[
+            type[SaveLoadProtocol],
+            type[SaveLoadDirProtocol],
+        ]
+    ):
+        def ser(
+            item: Union[SaveLoadProtocol, SaveLoadDirProtocol],
+            file: Path,
+            *args,
+        ):
+            return item.save(file, *args)
+
+        def deser(file: Path, *args):
+            return klass.load(file, *args)
 
         return {"ser": ser, "deser": deser}
 
     @staticmethod
     def get_tuple_serde(
         classes: Sequence[
-            Union[type[SaveLoadProtocol], type[SaveLoadCompressedProtocol]]
+            Union[
+                type[SaveLoadProtocol],
+                type[SaveLoadDirProtocol],
+            ]
         ],
         exts: Optional[list[str]] = None,
     ):
-        def ser(items: Sequence[Optional[SaveLoadProtocol]], file: Path):
+        def ser(
+            items: Sequence[Optional[SaveLoadProtocol | SaveLoadDirProtocol]],
+            file: Path,
+            *args,
+        ):
             for i, item in enumerate(items):
                 if item is not None:
                     ifile = file.parent / (
                         file.name + f"_{i}.{exts[i]}" if exts is not None else f"_{i}"
                     )
-                    item.save(ifile)
+                    item.save(ifile, *args)
             file.touch()
 
-        def deser(file: Path):
+        def deser(file: Path, *args):
             output = []
             for i, cls in enumerate(classes):
                 ifile = file.parent / (
                     file.name + f"_{i}.{exts[i]}" if exts is not None else f"_{i}"
                 )
                 if ifile.exists():
-                    output.append(cls.load(ifile))
+                    output.append(cls.load(ifile, *args))
                 else:
                     output.append(None)
             return tuple(output)
@@ -407,6 +455,124 @@ class Cache:
                             output = deser(cache_file.get())
                     else:
                         output = deser(cache_file.get())
+                return output
+
+            if mem_persist is not None:
+                return Cache.mem(
+                    cache_args=cache_args,
+                    cache_self_args=cache_self_args,
+                    cache_key=cache_key,
+                    cache_attr=cache_attr,
+                )(fn)
+            return fn
+
+        return wrapper_fn
+
+    @staticmethod
+    def dir(
+        ser: Callable[[Any, Path, Optional[Literal["gz", "bz2", "lz4"]]], None],
+        deser: Callable[[Path, Optional[Literal["gz", "bz2", "lz4"]]], Any],
+        cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
+        dirname: Optional[Union[str, Callable[..., str]]] = None,
+        compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
+        mem_persist: bool = False,
+        cache_attr: str = "_cache",
+        log_serde_time: bool = False,
+        disable: bool | str | Callable[[Any], bool] = False,
+    ) -> Callable:
+        """Decorator to cache the result of a function to files in a directory (each cache key use different directory). The function must
+        be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
+        the directory to store the cached directory. This is useful when the result of the function is serialized to multiple files and need to be
+        put under the same directory.
+
+        Note: It does not support function with variable number of arguments.
+
+        Args:
+            ser: A function to serialize the output of the function to a file.
+            deser: A function to deserialize the output of the function from a file.
+            cache_args: list of arguments to use for the default cache key function. If None, all arguments are used. If cache_key is provided
+                this argument is ignored.
+            cache_self_args: extra arguments that are derived from the instance to use for the default cache key
+                function. If cache_key is provided this argument is ignored.
+            cache_key: Function to use to generate the cache key. If None, the default is used. The default function
+                only support arguments of types str, int, bool, and None.
+            dirname: Directory name to use for the cache file. If None, the name of the function is used. If it is a function,
+                it will be called with the arguments of the function to generate the filename.
+            compression: whether to compress the cache file, the compression is detected via the file extension. Therefore,
+                this option has no effect if filename is provided. Moreover, when filename is a function, it cannot check
+                if the filename has the correct extension.
+            mem_persist: If True, the cache will also be stored in memory. This is a combination of mem and file cache.
+            cache_attr: Name of the attribute to use to store the cache in the instance.
+            fileext: Extension of the file to use if the filename is None (the function name is used as the filename).
+            log_serde_time: if True, will log the time it takes to deserialize the cache file.
+            disable: if True (either bool or an attribute (bool type) or a function called with self returning bool), the cache is disabled.
+        """
+        if isinstance(disable, bool) and disable:
+            return identity
+
+        def wrapper_fn(func):
+            if dirname is None:
+                dirname2 = func.__name__
+            else:
+                dirname2 = dirname
+
+            cache_args_helper = CacheArgsHelper(func)
+            if cache_args is not None:
+                cache_args_helper.keep_args(cache_args)
+
+            if cache_self_args is not None:
+                cache_args_helper.set_self_args(cache_self_args)
+
+            keyfn = cache_key
+            if keyfn is None:
+                cache_args_helper.ensure_auto_cache_key_friendly()
+                keyfn = lambda self, *args, **kwargs: orjson_dumps(
+                    cache_args_helper.get_args(self, *args, **kwargs)
+                )
+
+            @functools.wraps(func)
+            def fn(self: HasWorkingFsTrait, *args, **kwargs):
+                if not isinstance(disable, bool):
+                    is_disable = (
+                        getattr(self, disable)
+                        if isinstance(disable, str)
+                        else disable(self)
+                    )
+                    if is_disable:
+                        return func(self, *args, **kwargs)
+
+                fs = self.get_working_fs()
+
+                if isinstance(dirname2, str):
+                    cache_dirname = dirname2
+                else:
+                    cache_dirname = dirname2(self, *args, **kwargs)
+
+                cache_file = fs.get(
+                    cache_dirname, key=keyfn(self, *args, **kwargs), save_key=True
+                )
+
+                if not cache_file.exists():
+                    output = func(self, *args, **kwargs)
+                    with fs.acquire_write_lock(), cache_file.reserve_and_track() as fpath:
+                        if log_serde_time:
+                            with Timer().watch_and_report(
+                                f"serialize file {cache_file.relpath}",
+                                self.logger.debug,
+                            ):
+                                ser(output, fpath, compression)
+                        else:
+                            ser(output, fpath, compression)
+                else:
+                    if log_serde_time:
+                        with Timer().watch_and_report(
+                            f"deserialize file {cache_file.relpath}", self.logger.debug
+                        ):
+                            output = deser(cache_file.get(), compression)
+                    else:
+                        output = deser(cache_file.get(), compression)
                 return output
 
             if mem_persist is not None:
@@ -716,12 +882,16 @@ class SaveLoadProtocol(Protocol):
         ...
 
 
-class SaveLoadCompressedProtocol(Protocol):
-    def save(self, file: Path, compression: Optional[str] = None) -> None:
+class SaveLoadDirProtocol(Protocol):
+    def save(
+        self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
+    ) -> None:
         ...
 
     @classmethod
-    def load(cls, file: Path, compression: Optional[str] = None) -> Self:
+    def load(
+        cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
+    ) -> Self:
         ...
 
 

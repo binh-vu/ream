@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ream2"
-version = "1.8.2"
+version = "2.0.0"
 description = "An actor architecture for research software"
 authors = ["Binh Vu <binh@toan2.com>"]
 license = "MIT"
@@ -20,7 +20,7 @@ graph-wrapper = "^1.5.0"
 filelock = "^3.8.0"
 orjson = "^3.8.2"
 python-slugify = "^6.1.2"
-serde2 = "^1.5.0"
+serde2 = "^1.6.0"
 hugedict = "^2.9.1"
 
 [tool.poetry.group.dev.dependencies]

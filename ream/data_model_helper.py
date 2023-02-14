@@ -26,7 +26,11 @@ import pyarrow.parquet as pq
 from nptyping.ndarray import NDArrayMeta  # type: ignore
 from nptyping.shape_expression import get_dimensions  # type: ignore
 from ream.helper import has_dict_with_nonstr_keys
-from serde.helper import get_compression, get_open_fn
+from serde.helper import (
+    AVAILABLE_COMPRESSIONS,
+    get_filepath,
+    get_open_fn,
+)
 from tqdm import tqdm
 
 
@@ -179,6 +183,38 @@ class NumpyDataModel:
         setattr(newobj, field, value)
         return newobj
 
+    @classmethod
+    def concatenate(
+        cls,
+        models: list[NumpyDataModel],
+        merge_index: Optional[
+            dict[str, Callable[[list[NumpyDataModel]], dict | list | Index]]
+        ] = None,
+    ):
+        """Concatenate a list of NumpyDataModel objects into one object
+
+        Args:
+            models: a list of NumpyDataModel objects of the same class
+            merge_index: functions to merge an index, each key is the name of the index property. It's
+                optional if there is no index
+        """
+        metadata = cls._metadata
+        if metadata is None:
+            raise Exception(
+                f"{cls.__qualname__}.init() must be called before usage to finish setting up the schema"
+            )
+
+        merge_index = merge_index or {}
+
+        attrs = {}
+        for prop in metadata.array_props:
+            attrs[prop] = np.concatenate([getattr(m, prop) for m in models])
+
+        for prop in metadata.index_props:
+            attrs[prop] = merge_index[prop](models)
+
+        return cls(**attrs)
+
     def swap_(self, i: int, j: int):
         """Swap the position of two elements at index i and j.
         Note: This operator mutates the array
@@ -213,14 +249,13 @@ class NumpyDataModel:
     ):
         getattr(self, field)[i:j] = value
 
-    def save(self, file: Path, compression: Optional[str] = None):
+    def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
         metadata = self._metadata
         if metadata is None:
             raise Exception(
                 f"{self.__class__.__qualname__}.init() must be called before usage to finish setting up the schema"
             )
 
-        compression = compression or get_compression(file)
         cols = {name: getattr(self, name) for name in metadata.array_props}
         for name in metadata.array2d_props:
             array2d = cols[name]
@@ -228,17 +263,15 @@ class NumpyDataModel:
             for i in range(array2d.shape[1]):
                 cols[f"{name}_{i}"] = array2d[:, i]
 
+        dir.mkdir(parents=True, exist_ok=True)
         pq.write_table(
             pa.table(cols),
-            str(file),
+            str(dir / "data.parq"),
             compression=compression or "NONE",
         )
 
         if len(metadata.index_props) > 0:
-            index_file = file.parent / (
-                file.stem
-                + (f".index.{compression}" if compression is not None else ".index")
-            )
+            index_file = get_filepath(dir / "index.bin", compression)
             with get_open_fn(index_file)(str(index_file), "wb") as f:
                 f.write(struct.pack("<I", len(metadata.index_props)))
                 for i, name in enumerate(metadata.index_props):
@@ -250,18 +283,13 @@ class NumpyDataModel:
                     f.write(serindex)
 
     @classmethod
-    def load(cls, file: Path, compression: Optional[str] = None):
+    def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
         metadata = cls._metadata
         if metadata is None:
             raise Exception(
                 f"{cls.__qualname__}.init() must be called before usage to finish setting up the schema"
             )
-
-        compression = compression or get_compression(file)
-        index_file = file.parent / (
-            file.stem
-            + (f".index.{compression}" if compression is not None else ".index")
-        )
+        index_file = get_filepath(dir / "index.bin", compression)
         indices = []
 
         if index_file.exists():
@@ -276,7 +304,7 @@ class NumpyDataModel:
                         index = metadata.default_deserdict(f.read(size))
                     indices.append(index)
 
-        tbl = pq.read_table(str(file))
+        tbl = pq.read_table(str(dir / "data.parq"))
         kwargs = {}
         if len(metadata.array2d_props) == 0:
             for name in metadata.array_props:
@@ -316,23 +344,72 @@ class NumpyDataModel:
 
 @dataclass
 class NumpyDataModelContainer:
-    def save(self, dir: Path):
+    def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+        index_props = []
         for field in fields(self):
-            file = dir / f"{field.name}.parq"
-            getattr(self, field.name).save(file)
+            obj = getattr(self, field.name)
+            if isinstance(obj, NumpyDataModel):
+                obj.save(dir / field.name)
+            else:
+                index_props.append((field.name, obj))
+
+        if len(index_props) > 0:
+            index_file = get_filepath(dir / "index.bin", compression)
+            assert not index_file.exists()
+            with get_open_fn(index_file)(str(index_file), "wb") as f:
+                f.write(struct.pack("<I", len(index_props)))
+                for i, (name, obj) in enumerate(index_props):
+                    if isinstance(obj, Index):
+                        serindex = obj.to_bytes()
+                    else:
+                        serindex = pickle.dumps(obj)
+
+                    sername = name.encode()
+                    f.write(struct.pack("<I", len(sername)))
+                    f.write(sername)
+                    f.write(struct.pack("<I", len(serindex)))
+                    f.write(serindex)
 
     @classmethod
-    def load(cls, dir: Path):
+    def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
         assert is_dataclass(cls)
         type_hints: dict[str, type] = get_type_hints(cls)
         kwargs = {}
+        index_props = []
         for field in fields(cls):
-            file = dir / f"{field.name}.parq"
             fieldtype = type_hints[field.name]
-            assert issubclass(fieldtype, NumpyDataModel)
-            kwargs[field.name] = fieldtype.load(file)
+            if (ori_type := get_origin(fieldtype)) is not None:
+                fieldtype = ori_type
 
-        return NumpyDataModelContainer(**kwargs)
+            if issubclass(fieldtype, NumpyDataModel):
+                kwargs[field.name] = fieldtype.load(dir / field.name, compression)
+            else:
+                index_props.append(field)
+
+        if len(index_props) > 0:
+            index_file = get_filepath(dir / "index.bin", compression)
+            n_npmodel = len(kwargs)
+
+            with get_open_fn(index_file)(str(index_file), "rb") as f:
+                n_indices = struct.unpack("<I", f.read(4))[0]
+                for i in range(n_indices):
+                    size = struct.unpack("<I", f.read(4))[0]
+                    name = f.read(size).decode()
+                    size = struct.unpack("<I", f.read(4))[0]
+                    obj = f.read(size)
+                    obj_type = type_hints[name]
+                    if (ori_type := get_origin(obj_type)) is not None:
+                        obj_type = ori_type
+
+                    if issubclass(obj_type, Index):
+                        obj = obj_type.from_bytes(obj)
+                    else:
+                        obj = pickle.loads(obj)
+                    kwargs[name] = obj
+
+            assert len(kwargs) == n_npmodel + len(index_props)
+
+        return cls(**kwargs)
 
 
 class ContiguousIndexChecker:

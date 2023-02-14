@@ -1,18 +1,24 @@
 from __future__ import annotations
+from collections import Callable
 import re, functools, orjson
 from typing import TypedDict, Dict, Optional, Tuple, List, Generic
 from loguru import logger
 from dataclasses import dataclass
 from ream.actors.interface import E
 from pathlib import Path
-from serde.helper import get_compression
+from serde.helper import AVAILABLE_COMPRESSIONS, get_compression, get_filepath
 import serde.pickle
+import serde.json
 
 RawSlice = TypedDict("Slice", value=int, is_percentage=bool, absolute_value=int)
 
 
 class DatasetDict(Dict[str, E]):
-    serde = (serde.pickle.ser, serde.pickle.deser, "pkl")
+    serde: tuple[Callable, Callable, Optional[str]] = (
+        serde.pickle.ser,
+        serde.pickle.deser,
+        "pkl",
+    )
 
     def __init__(self, name: str, subsets: Dict[str, E], provenance: str = ""):
         super().__init__(subsets)
@@ -26,51 +32,45 @@ class DatasetDict(Dict[str, E]):
         """
         return cls(obj.name, dict(obj), obj.provenance)
 
-    def save(self, file: Path):
-        outdir = file.parent / file.stem
-        outdir.mkdir(parents=True, exist_ok=True)
-
-        compression = get_compression(file)
-        if compression is not None:
-            compression = f".{compression}"
-            # save the file as cache helper requires the file to exist
-            file.touch()
-        else:
-            compression = ""
-        ext = f".{self.serde[2]}{compression}"
-
-        (outdir / f"metadata.json{compression}").write_bytes(
+    def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+        (dir / "metadata.json").write_bytes(
             orjson.dumps({"name": self.name, "provenance": self.provenance})
         )
 
+        fileext = self.serde[2]
         for subset, ds in self.items():
-            filename = f"{subset if subset != '' else '_empty'}{ext}"
-            dsfile = outdir / filename
-            self.serde[0](ds, dsfile)
+            if fileext is not None:
+                filename = f"{subset if subset != '' else '_empty'}.{fileext}"
+                filepath = get_filepath(dir / filename, compression)
+                self.serde[0](ds, filepath)
+            else:
+                filepath = dir / (subset if subset != "" else "_empty")
+                self.serde[0](ds, filepath, compression)
 
     @classmethod
-    def load(cls, file: Path):
-        outdir = file.parent / file.stem
-
-        compression = get_compression(file)
-        if compression is not None:
-            compression = f".{compression}"
-        else:
-            compression = ""
-
-        metadata = orjson.loads((outdir / f"metadata.json{compression}").read_bytes())
+    def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+        metadata = serde.json.deser(dir / "metadata.json")
         name = metadata["name"]
         provenance = metadata["provenance"]
         ds = cls(name, {}, provenance)
 
-        ext = f".{cls.serde[2]}{compression}"
-
-        for dsfile in outdir.iterdir():
-            if dsfile.name.endswith(ext):
-                subset = dsfile.name[: -len(ext)]
-                if subset == "_empty":
-                    subset = ""
-                ds[subset] = cls.serde[1](dsfile)
+        for file in dir.iterdir():
+            if (
+                file.name == "metadata.json"
+                or file.name[0] == "."
+                or file.name[0] == "_"
+            ):
+                continue
+            if len(file.suffixes) > 0:
+                subset = file.name[: -sum(len(e) for e in file.suffixes)]
+            else:
+                subset = file.name
+            if subset == "_empty":
+                subset = ""
+            if file.suffix != "":
+                ds[subset] = cls.serde[1](file)
+            else:
+                ds[subset] = cls.serde[1](file, compression)
         return ds
 
 

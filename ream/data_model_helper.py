@@ -348,7 +348,7 @@ class NumpyDataModelContainer:
         index_props = []
         for field in fields(self):
             obj = getattr(self, field.name)
-            if isinstance(obj, NumpyDataModel):
+            if isinstance(obj, (NumpyDataModel, NumpyDataModelContainer)):
                 obj.save(dir / field.name)
             else:
                 index_props.append((field.name, obj))
@@ -381,7 +381,7 @@ class NumpyDataModelContainer:
             if (ori_type := get_origin(fieldtype)) is not None:
                 fieldtype = ori_type
 
-            if issubclass(fieldtype, NumpyDataModel):
+            if issubclass(fieldtype, (NumpyDataModel, NumpyDataModelContainer)):
                 kwargs[field.name] = fieldtype.load(dir / field.name, compression)
             else:
                 index_props.append(field)
@@ -438,6 +438,19 @@ class NumpyDataModelHelper:
 
     However, some helper methods can be used for other cases as well.
     """
+
+    @classmethod
+    def create_simple_index(
+        cls, names: list[str], npmodels: list[NumpyDataModel]
+    ) -> dict[str, tuple[int, int]]:
+        """Create a simple index that map each name to the index range of the corresponding numpy data model"""
+        index = {}
+        offset = 0
+        for name, npmodel in zip(names, npmodels):
+            size = len(npmodel)
+            index[name] = (offset, offset + size)
+            offset += size
+        return index
 
     @classmethod
     def stack(cls, npmodels: list[NumpyDataModel], keys: Sequence[str | int]):

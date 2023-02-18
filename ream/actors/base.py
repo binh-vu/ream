@@ -52,6 +52,17 @@ class BaseActor(Generic[E, P], Actor[E]):
             dependencies=deps,
         )
 
+    def get_provenance(self):
+        """Return the provenance of this actor. The provenance is used when there are cases where even if we have the same state, the result can be different.
+
+        For example:
+            - training a model with a random seed and store the model for later use
+            - use external method that has a version itself and the version can be changed later
+
+        To use this provenance as a key to cache result of a function, use `cache_self_args=CacheArgsHelper.gen_cache_self_args(get_provenance)` in Cache decorator.
+        """
+        return ""
+
     def get_working_fs(self) -> FS:
         """Get a working directory for this actor that can be used to store the results of each example."""
         if self._working_fs is None:
@@ -75,3 +86,7 @@ class BaseActor(Generic[E, P], Actor[E]):
     def get_verbose_level(self) -> int:
         """Get the verbose level of this actor from the environment variable"""
         return int(os.environ.get(self.__class__.__name__.upper() + "_VERBOSE", "0"))
+
+    def _fmt_prov(self, *prov: str) -> str:
+        """Format the provenances"""
+        return ";".join(prov)

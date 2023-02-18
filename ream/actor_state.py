@@ -8,6 +8,7 @@ from typing import (
     Type,
     Union,
 )
+from ream.actor_version import ActorVersion
 from ream.params_helper import DataClassInstance, param_as_dict
 from ream.helper import get_classpath
 
@@ -17,7 +18,7 @@ class ActorState:
     """Represent a state of an actor, including its class, versions, and parameters"""
 
     classpath: str
-    classversion: Union[str, int]
+    classversion: Union[str, int, ActorVersion]
     params: Union[
         DataClassInstance, List[DataClassInstance], Dict[str, DataClassInstance]
     ]
@@ -37,7 +38,9 @@ class ActorState:
             assert hasattr(CLS, "VERSION"), "Class must have a VERSION attribute"
             version = getattr(CLS, "VERSION")
 
-        assert isinstance(version, (int, str)), "Version must be a string"
+        assert isinstance(
+            version, (int, str, ActorVersion)
+        ), "Version must be a string, a number, or an ActorVersion"
 
         return ActorState(
             classpath=get_classpath(CLS),

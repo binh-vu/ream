@@ -34,11 +34,20 @@ class DatasetDict(Dict[str, E]):
 
     def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
         (dir / "metadata.json").write_bytes(
-            orjson.dumps({"name": self.name, "provenance": self.provenance})
+            orjson.dumps(
+                {
+                    "name": self.name,
+                    "provenance": self.provenance,
+                    "subsets": list(self.keys()),
+                }
+            )
         )
 
         fileext = self.serde[2]
         for subset, ds in self.items():
+            if subset == "":
+                assert "_empty" not in self
+
             if fileext is not None:
                 filename = f"{subset if subset != '' else '_empty'}.{fileext}"
                 filepath = get_filepath(dir / filename, compression)
@@ -52,25 +61,20 @@ class DatasetDict(Dict[str, E]):
         metadata = serde.json.deser(dir / "metadata.json")
         name = metadata["name"]
         provenance = metadata["provenance"]
-        ds = cls(name, {}, provenance)
+        subsets = metadata["subsets"]
 
-        for file in dir.iterdir():
-            if (
-                file.name == "metadata.json"
-                or file.name[0] == "."
-                or file.name[0] == "_"
-            ) and not file.name.startswith("_empty"):
-                continue
-            if len(file.suffixes) > 0:
-                subset = file.name[: -sum(len(e) for e in file.suffixes)]
+        ds = cls(name, {}, provenance)
+        fileext = cls.serde[2]
+
+        for subset in subsets:
+            if fileext is not None:
+                filename = f"{subset if subset != '' else '_empty'}.{fileext}"
+                filepath = get_filepath(dir / filename, compression)
+                ds[subset] = cls.serde[1](filepath)
             else:
-                subset = file.name
-            if subset == "_empty":
-                subset = ""
-            if file.suffix != "":
-                ds[subset] = cls.serde[1](file)
-            else:
-                ds[subset] = cls.serde[1](file, compression)
+                filepath = dir / (subset if subset != "" else "_empty")
+                ds[subset] = cls.serde[1](filepath, compression)
+
         return ds
 
 

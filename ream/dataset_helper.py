@@ -1,7 +1,6 @@
 from __future__ import annotations
-from collections import Callable
 import re, functools, orjson
-from typing import TypedDict, Dict, Optional, Tuple, List, Generic
+from typing import TypedDict, Dict, Optional, Tuple, List, Callable
 from loguru import logger
 from dataclasses import dataclass
 from ream.actors.interface import E

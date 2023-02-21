@@ -59,7 +59,7 @@ class DatasetDict(Dict[str, E]):
                 file.name == "metadata.json"
                 or file.name[0] == "."
                 or file.name[0] == "_"
-            ):
+            ) and not file.name.startswith("_empty"):
                 continue
             if len(file.suffixes) > 0:
                 subset = file.name[: -sum(len(e) for e in file.suffixes)]

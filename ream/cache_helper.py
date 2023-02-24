@@ -30,7 +30,7 @@ import serde.prelude as serde
 from timer import Timer
 from ream.helper import orjson_dumps
 from serde.helper import AVAILABLE_COMPRESSIONS, JsonSerde
-from hugedict.sqlitedict import SqliteDict, SqliteDictKeyType
+from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from hugedict.misc import identity, Chain2
 
 try:
@@ -670,7 +670,7 @@ class Cache:
                 if not hasattr(self, dbattr):
                     sqlitedict = SqliteDict(
                         fs.root / dbname,
-                        keytype=SqliteDictKeyType.bytes,
+                        keytype=SqliteDictFieldType.bytes,
                         ser_value=identity,
                         deser_value=identity,
                     )

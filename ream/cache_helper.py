@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Protocol,
     Type,
+    TypeVar,
     Union,
     get_args,
     get_origin,
@@ -41,6 +42,8 @@ except ImportError:
 NoneType = type(None)
 # arguments are (self, *args, **kwargs)
 CacheKeyFn = Callable[..., bytes]
+
+F = TypeVar("F")
 
 if TYPE_CHECKING:
     from loguru import Logger
@@ -287,7 +290,7 @@ class Cache:
         cache_key: Optional[CacheKeyFn | Callable[..., tuple]] = None,
         cache_attr: str = "_cache",
         disable: bool | str | Callable[[Any], bool] = False,
-    ):
+    ) -> Callable[[F], F]:
         """Decorator to cache the result of a function to an attribute in the instance in memory.
 
         Note: It does not support function with variable number of arguments.
@@ -342,7 +345,7 @@ class Cache:
 
             return fn
 
-        return wrapper_fn
+        return wrapper_fn  # type: ignore
 
     @staticmethod
     def file(
@@ -358,7 +361,7 @@ class Cache:
         fileext: Optional[str] = None,
         log_serde_time: bool = False,
         disable: bool | str | Callable[[Any], bool] = False,
-    ) -> Callable:
+    ) -> Callable[[F], F]:
         """Decorator to cache the result of a function to a file. The function must
         be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
         the directory to store the cached file.
@@ -466,7 +469,7 @@ class Cache:
                 )(fn)
             return fn
 
-        return wrapper_fn
+        return wrapper_fn  # type: ignore
 
     @staticmethod
     def dir(
@@ -481,7 +484,7 @@ class Cache:
         cache_attr: str = "_cache",
         log_serde_time: bool = False,
         disable: bool | str | Callable[[Any], bool] = False,
-    ) -> Callable:
+    ) -> Callable[[F], F]:
         """Decorator to cache the result of a function to files in a directory (each cache key use different directory). The function must
         be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
         the directory to store the cached directory. This is useful when the result of the function is serialized to multiple files and need to be
@@ -584,7 +587,7 @@ class Cache:
                 )(fn)
             return fn
 
-        return wrapper_fn
+        return wrapper_fn  # type: ignore
 
     @staticmethod
     def sqlite(
@@ -598,7 +601,7 @@ class Cache:
         cache_attr: str = "_cache",
         log_serde_time: bool = False,
         disable: bool | str | Callable[[Any], bool] = False,
-    ):
+    ) -> Callable[[F], F]:
         """Decorator to cache the result of a function to a record in a sqlite database. The function must
         be a method of a class that has trait `HasWorkingFsTrait` so that we can determine
         the directory to store the sqlite database.
@@ -718,7 +721,7 @@ class Cache:
                 )(fn)
             return fn
 
-        return wrapper_fn
+        return wrapper_fn  # type: ignore
 
 
 class CacheArgsHelper:

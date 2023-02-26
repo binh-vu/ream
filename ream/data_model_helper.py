@@ -1,10 +1,14 @@
 from __future__ import annotations
+from io import BufferedReader, BytesIO
+import os
 
 import pickle
 import struct
 from dataclasses import dataclass, fields, is_dataclass
-from pathlib import Path
+from pathlib import Path, PosixPath, WindowsPath
 from typing import (
+    IO,
+    BinaryIO,
     Callable,
     Generic,
     List,
@@ -250,6 +254,14 @@ class NumpyDataModel:
         getattr(self, field)[i:j] = value
 
     def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+        """Save the data model to a directory containing 2 files: `data.parq` and `index.bin`.
+
+        Note: this function is carefully written so that the two files can be buffered to concatenate
+        multiple models to a single file using VirtualDir class. See `batch_save` for details.
+
+        Args:
+            dir: the directory to save the data model. Can be either Path or VirtualDir
+        """
         metadata = self._metadata
         if metadata is None:
             raise Exception(
@@ -266,13 +278,13 @@ class NumpyDataModel:
         dir.mkdir(parents=True, exist_ok=True)
         pq.write_table(
             pa.table(cols),
-            str(dir / "data.parq"),
+            dir / "data.parq",
             compression=compression or "NONE",
         )
 
         if len(metadata.index_props) > 0:
-            index_file = get_filepath(dir / "index.bin", compression)
-            with get_open_fn(index_file)(str(index_file), "wb") as f:
+            index_filename = get_filepath("index.bin", compression)
+            with get_open_fn(index_filename)(dir / index_filename, "wb") as f:
                 f.write(struct.pack("<I", len(metadata.index_props)))
                 for i, name in enumerate(metadata.index_props):
                     if metadata.index_prop_idxs[i][1] is not None:
@@ -283,17 +295,34 @@ class NumpyDataModel:
                     f.write(serindex)
 
     @classmethod
+    def batch_save(
+        cls,
+        batch: Sequence[NumpyDataModel],
+        dir: Path,
+        compression: Optional[AVAILABLE_COMPRESSIONS],
+    ):
+        """Save a list of numpy data models into a directory. Different from the save method of numpy data model,
+        data of multiple models will be concatenated into a single file.
+        """
+        with BatchFileManager() as filemanager:
+            virdir = VirtualDir(dir, filemanager=filemanager, mode="write")
+            for npmodel in batch:
+                npmodel.save(virdir, compression)
+                filemanager.flush()
+
+    @classmethod
     def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
         metadata = cls._metadata
         if metadata is None:
             raise Exception(
                 f"{cls.__qualname__}.init() must be called before usage to finish setting up the schema"
             )
-        index_file = get_filepath(dir / "index.bin", compression)
+
         indices = []
 
-        if index_file.exists():
-            with get_open_fn(index_file)(str(index_file), "rb") as f:
+        if len(metadata.index_props) > 0:
+            index_filename = get_filepath("index.bin", compression)
+            with get_open_fn(index_filename)(dir / index_filename, "rb") as f:
                 n_indices = struct.unpack("<I", f.read(4))[0]
                 for i in range(n_indices):
                     size = struct.unpack("<I", f.read(4))[0]
@@ -304,7 +333,7 @@ class NumpyDataModel:
                         index = metadata.default_deserdict(f.read(size))
                     indices.append(index)
 
-        tbl = pq.read_table(str(dir / "data.parq"))
+        tbl = pq.read_table(dir / "data.parq")
         kwargs = {}
         if len(metadata.array2d_props) == 0:
             for name in metadata.array_props:
@@ -341,6 +370,20 @@ class NumpyDataModel:
 
         return cls(**kwargs)
 
+    @classmethod
+    def batch_load(
+        cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
+    ):
+        with BatchFileManager() as filemanager:
+            virdir = VirtualDir(dir, filemanager=filemanager, mode="read")
+            output = []
+            while True:
+                output.append(cls.load(virdir, compression))
+                filemanager.flush()
+                if filemanager.is_all_read_done():
+                    break
+            return output
+
 
 @dataclass
 class NumpyDataModelContainer:
@@ -349,14 +392,13 @@ class NumpyDataModelContainer:
         for field in fields(self):
             obj = getattr(self, field.name)
             if isinstance(obj, (NumpyDataModel, NumpyDataModelContainer)):
-                obj.save(dir / field.name)
+                obj.save(dir / field.name, compression)
             else:
                 index_props.append((field.name, obj))
 
         if len(index_props) > 0:
-            index_file = get_filepath(dir / "index.bin", compression)
-            assert not index_file.exists()
-            with get_open_fn(index_file)(str(index_file), "wb") as f:
+            index_filename = get_filepath("index.bin", compression)
+            with get_open_fn(index_filename)(dir / index_filename, "wb") as f:
                 f.write(struct.pack("<I", len(index_props)))
                 for i, (name, obj) in enumerate(index_props):
                     if isinstance(obj, Index):
@@ -369,6 +411,22 @@ class NumpyDataModelContainer:
                     f.write(sername)
                     f.write(struct.pack("<I", len(serindex)))
                     f.write(serindex)
+
+    @classmethod
+    def batch_save(
+        cls,
+        containers: Sequence[C],
+        dir: Path,
+        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+    ):
+        if len(containers) == 0:
+            raise ValueError("containers must not be empty")
+
+        with BatchFileManager() as filemanager:
+            virdir = VirtualDir(dir, filemanager=filemanager, mode="write")
+            for container in containers:
+                container.save(virdir, compression)
+                filemanager.flush()
 
     @classmethod
     def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
@@ -387,10 +445,10 @@ class NumpyDataModelContainer:
                 index_props.append(field)
 
         if len(index_props) > 0:
-            index_file = get_filepath(dir / "index.bin", compression)
+            index_filename = get_filepath("index.bin", compression)
             n_npmodel = len(kwargs)
 
-            with get_open_fn(index_file)(str(index_file), "rb") as f:
+            with get_open_fn(index_filename)(dir / index_filename, "rb") as f:
                 n_indices = struct.unpack("<I", f.read(4))[0]
                 for i in range(n_indices):
                     size = struct.unpack("<I", f.read(4))[0]
@@ -411,6 +469,23 @@ class NumpyDataModelContainer:
 
         return cls(**kwargs)
 
+    @classmethod
+    def batch_load(
+        cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
+    ):
+        with BatchFileManager() as filemanager:
+            virdir = VirtualDir(dir, filemanager=filemanager, mode="read")
+            output = []
+            while True:
+                output.append(cls.load(virdir, compression))
+                filemanager.flush()
+                if filemanager.is_all_read_done():
+                    break
+            return output
+
+
+C = TypeVar("C", bound=NumpyDataModelContainer)
+
 
 class ContiguousIndexChecker:
     """A helper class to check if the order of range of items in the numpy data model's index is contiguous"""
@@ -429,6 +504,95 @@ class ContiguousIndexChecker:
             )
         self.start = end
         return self
+
+
+class BatchFileManager:
+    def __init__(self):
+        self.open_write_files: dict[str, BinaryIO] = {}
+        self.open_read_files: dict[str, BufferedReader] = {}
+        self.pend_read_files: dict[str, BinaryIO] = {}
+        self.pend_write_files: dict[str, tuple[BytesIO, pa.PythonFile]] = {}
+
+    def create(self, filepath: str):
+        if filepath in self.pend_write_files:
+            raise Exception(
+                "Cannot request the same file twice. This is to prevent data corruption. Finishing writting data to the file and flushing it before requesting it again."
+            )
+        buf = BytesIO()
+        self.pend_write_files[filepath] = (buf, pa.PythonFile(buf))
+        if filepath not in self.open_write_files:
+            self.open_write_files[filepath] = open(filepath, "wb")
+
+        return self.pend_write_files[filepath][1]
+
+    def read(self, filepath: str) -> BinaryIO:
+        if filepath in self.pend_read_files:
+            raise Exception(
+                "Cannot request the same file twice. This is to prevent data corruption. Finishing reading data to the file and flushing it before requesting it again."
+            )
+
+        if filepath not in self.open_read_files:
+            self.open_read_files[filepath] = open(filepath, "rb")
+
+        file = self.open_read_files[filepath]
+        size = struct.unpack("<I", file.read(4))[0]
+        buf = file.read(size)
+
+        self.pend_read_files[filepath] = BytesIO(buf)
+        return self.pend_read_files[filepath]
+
+    def __enter__(self):
+        assert len(self.open_write_files) == 0 and len(self.open_read_files) == 0
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.flush()
+        for file in self.open_write_files.values():
+            file.close()
+        for file in self.open_read_files.values():
+            file.close()
+        self.open_read_files.clear()
+        self.open_write_files.clear()
+
+    def flush(self):
+        for filepath, (buf, file) in self.pend_write_files.items():
+            file = self.open_write_files[filepath]
+            buf = buf.getbuffer()
+            file.write(struct.pack("<I", buf.nbytes))
+            file.write(buf)
+
+        self.pend_write_files.clear()
+        self.pend_read_files.clear()
+
+    def is_all_read_done(self) -> bool:
+        return all(len(file.peek(1)) == 0 for file in self.open_read_files.values())
+
+
+class VirtualDir(Path):
+    __slots__ = ("filemanager", "mode")
+
+    _flavour = getattr(WindowsPath if os.name == "nt" else PosixPath, "_flavour")
+    filemanager: BatchFileManager
+    mode: Literal["read", "write"]
+
+    def __new__(cls, *args, **kwargs):
+        object = Path.__new__(cls, *args, **kwargs)
+        object.filemanager = kwargs["filemanager"]
+        object.mode = kwargs["mode"]
+        return object
+
+    def __truediv__(self, key: str) -> Union[pa.PythonFile, VirtualDir]:
+        key = str(key)
+        if key.find(".") == -1:
+            return VirtualDir(
+                str(self), key, filemanager=self.filemanager, mode=self.mode
+            )
+
+        filepath = str(super().__truediv__(key))
+        if self.mode == "write":
+            return self.filemanager.create(filepath)
+        else:
+            return self.filemanager.read(filepath)
 
 
 class NumpyDataModelHelper:
@@ -707,3 +871,14 @@ class NumpyDataModelHelper:
             obj[key] = tuple(obj[key])
 
         return index
+
+
+# dir = VirtualDir("/tmp", filetrack=FileTrack())
+# print(dir.name2file, dir.filetrack)
+# dir / "test.h5"
+# print(dir.name2file, dir.filetrack)
+# subdir = dir / "abc"
+# print(dir.name2file, dir.filetrack)
+# print(type(subdir))
+# print(subdir.name2file, subdir.filetrack)
+# # print((VirtualDir("/tmp") / "test.h5").name2file)

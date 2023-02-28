@@ -1,6 +1,6 @@
 from __future__ import annotations
 import re, functools, orjson
-from typing import TypedDict, Dict, Optional, Tuple, List, Callable
+from typing import TypedDict, Dict, Optional, Tuple, List, Callable, TypeVar
 from loguru import logger
 from dataclasses import dataclass
 from ream.actors.interface import E
@@ -10,6 +10,7 @@ import serde.pickle
 import serde.json
 
 RawSlice = TypedDict("Slice", value=int, is_percentage=bool, absolute_value=int)
+E2 = TypeVar("E2")
 
 
 class DatasetDict(Dict[str, E]):
@@ -30,6 +31,15 @@ class DatasetDict(Dict[str, E]):
         because it relies on the class variable `serde` to determine how to serialize and deserialize examples
         """
         return cls(obj.name, dict(obj), obj.provenance)
+
+    def map(self, fn: Callable[[E], E2]) -> DatasetDict[E2]:
+        """Transform dataset from DatasetDict[E] to DatasetDict[E2]"""
+        out: DatasetDict[E2] = DatasetDict(
+            name=self.name, subsets={}, provenance=self.provenance
+        )
+        for subset, ds in self.items():
+            out[subset] = fn(ds)
+        return out
 
     def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
         (dir / "metadata.json").write_bytes(
@@ -196,6 +206,25 @@ class DatasetQuery:
                 subset: array[start["absolute_value"] : end["absolute_value"]]
                 for subset, (start, end) in self.subsets.items()
             },
+        )
+
+    def strip(self) -> DatasetQuery:
+        """Remove the subset name from the query. Error when there are multiple subsets."""
+        if len(self.subsets) > 1:
+            raise ValueError(
+                f"Cannot strip subsets from query when there are multiple subsets: {self.subsets}"
+            )
+        return DatasetQuery(
+            self.dataset,
+            {"": next(iter(self.subsets.values()))},
+            self.shuffle,
+            self.seed,
+        )
+
+    def subset(self, subset: str) -> DatasetQuery:
+        """Select a subset from the query. Error when the subset does not exist."""
+        return DatasetQuery(
+            self.dataset, {subset: self.subsets[subset]}, self.shuffle, self.seed
         )
 
     def get_query(self, subsets: Optional[str | List[str]]) -> str:

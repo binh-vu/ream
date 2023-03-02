@@ -36,41 +36,43 @@ class EnumParams:
     """
 
     def __post_init__(self):
-        method_field = self._get_method_field()
-        method = getattr(self, method_field.name)
-        assert hasattr(self, method)
-
-        for name in method_field.metadata["variants"].keys():
-            if name != method:
-                # set params of other methods to None
-                setattr(self, name, None)
+        for method_field in self.get_method_fields():
+            method = getattr(self, method_field.name)
+            assert hasattr(self, method)
+            for name in method_field.metadata["variants"].keys():
+                if name != method:
+                    # set params of other methods to None
+                    setattr(self, name, None)
 
     def without_method_args(self):
-        """Return a shallow copy of this object with the method's parameters set to None."""
+        """Return a shallow copy of this object with the methods' parameters set to None."""
         other = replace(self)  # type: ignore -- method in dataclass
-        setattr(other, getattr(self, self._get_method_field().name), None)
+        for field in self.get_method_fields():
+            setattr(other, getattr(self, field.name), None)
         return other
 
-    def get_method_class(self) -> Type:
-        method_field = self._get_method_field()
+    def get_method_class(self, method_field: Field) -> Type:
         method = getattr(self, method_field.name)
-        return self._get_method_field().metadata["variants"][method]
+        return method_field.metadata["variants"][method]
 
-    def get_method_params(self) -> DataClassInstance:
-        method_field = self._get_method_field()
+    def get_method_params(self, method_field: Field) -> DataClassInstance:
         method = getattr(self, method_field.name)
         return getattr(self, method)
 
-    def _get_method_field(self) -> Field:
-        if not hasattr(self, "__method_field"):
+    def get_method_fields(self) -> list[Field]:
+        if not hasattr(self, "__method_fields"):
+            method_fields = []
             for field in fields(self):
                 if "variants" in field.metadata:
-                    self.__method_field = field
-                    return self.__method_field
-            raise ValueError(
-                f"No method field found in {self.__class__}. The method field is the one has `variants` property (dict type) in its metadata"
-            )
-        return self.__method_field
+                    method_fields.append(field)
+
+            if len(method_fields) == 0:
+                raise ValueError(
+                    f"No method field found in {self.__class__}. The method field is the one has `variants` property (dict type) in its metadata"
+                )
+
+            self.__method_fields = method_fields
+        return self.__method_fields
 
 
 def are_valid_parameters(

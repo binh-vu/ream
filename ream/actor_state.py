@@ -35,7 +35,7 @@ class ActorState:
     ) -> ActorState:
         """Compute a unique cache id"""
         if version is None:
-            assert hasattr(CLS, "VERSION"), "Class must have a VERSION attribute"
+            assert hasattr(CLS, "VERSION"), f"Class {CLS} must have a VERSION attribute"
             version = getattr(CLS, "VERSION")
 
         assert isinstance(

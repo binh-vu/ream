@@ -37,11 +37,13 @@ class BaseActor(Generic[E, P], Actor[E]):
         deps = [actor.get_actor_state() for actor in self.dep_actors]
 
         if isinstance(self.params, EnumParams):
-            deps.append(
-                ActorState.create(
-                    self.params.get_method_class(), self.params.get_method_params()
+            for field in self.params.get_method_fields():
+                deps.append(
+                    ActorState.create(
+                        self.params.get_method_class(field),
+                        self.params.get_method_params(field),
+                    )
                 )
-            )
             params = self.params.without_method_args()
         else:
             params = self.params

@@ -1,11 +1,21 @@
 from __future__ import annotations
+import random
 import re, functools, orjson
-from typing import TypedDict, Dict, Optional, Tuple, List, Callable, TypeVar
+from typing import (
+    Iterator,
+    TypedDict,
+    Dict,
+    Optional,
+    Tuple,
+    List,
+    Callable,
+    TypeVar,
+)
 from loguru import logger
 from dataclasses import dataclass
 from ream.actors.interface import E
 from pathlib import Path
-from serde.helper import AVAILABLE_COMPRESSIONS, get_compression, get_filepath
+from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
 import serde.pickle
 import serde.json
 
@@ -200,6 +210,10 @@ class DatasetQuery:
                     ]
                 )
 
+        if self.shuffle:
+            array = list(array)
+            random.Random(self.seed).shuffle(array)
+
         return DatasetDict(
             self.dataset,
             {
@@ -227,7 +241,11 @@ class DatasetQuery:
             self.dataset, {subset: self.subsets[subset]}, self.shuffle, self.seed
         )
 
-    def get_query(self, subsets: Optional[str | List[str]]) -> str:
+    def iter_subset(self) -> Iterator[Tuple[str, DatasetQuery]]:
+        """Iterate over the subsets in the query."""
+        return ((subset, self.subset(subset)) for subset in self.subsets)
+
+    def get_query(self, subsets: Optional[str | List[str]] = None) -> str:
         """Generate a query string for retrieving the subsets of the dataset."""
         if subsets is None:
             subsets = list(self.subsets.keys())

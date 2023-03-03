@@ -30,7 +30,7 @@ class ActorState:
         args: Union[
             DataClassInstance, List[DataClassInstance], Dict[str, DataClassInstance]
         ],
-        version: Optional[Union[int, str]] = None,
+        version: Optional[Union[int, str, ActorVersion]] = None,
         dependencies: Optional[List[ActorState]] = None,
     ) -> ActorState:
         """Compute a unique cache id"""

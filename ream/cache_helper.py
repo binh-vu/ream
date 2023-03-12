@@ -254,18 +254,14 @@ class ClsSerdeCache:
         ):
             for i, item in enumerate(items):
                 if item is not None:
-                    ifile = file.parent / (
-                        file.name + f"_{i}.{exts[i]}" if exts is not None else f"_{i}"
-                    )
+                    ifile = file / (f"_{i}.{exts[i]}" if exts is not None else f"_{i}")
                     item.save(ifile, *args)
             file.touch()
 
         def deser(file: Path, *args):
             output = []
             for i, cls in enumerate(classes):
-                ifile = file.parent / (
-                    file.name + f"_{i}.{exts[i]}" if exts is not None else f"_{i}"
-                )
+                ifile = file / (f"_{i}.{exts[i]}" if exts is not None else f"_{i}")
                 if ifile.exists():
                     output.append(cls.load(ifile, *args))
                 else:
@@ -866,11 +862,18 @@ class HasWorkingFsTrait(Protocol):
 
 
 class Cacheable:
-    """A class that implement HasWorkingFSTrait so it can be used with @Cache.file decorator."""
+    """A class that implement HasWorkingFSTrait so it can be used with @Cache.file decorator.
 
-    def __init__(self, workdir: Path):
+    Args:
+        workdir: directory to store cached files.
+        disable: set to True to disable caching. The wrapper method needs to use this flag to be effective!
+    """
+
+    def __init__(self, workdir: Path, disable: bool = False):
         self.workdir = FS(workdir)
         self.logger = logger.bind(name=self.__class__.__name__)
+
+        self.disable = disable
 
     def get_working_fs(self) -> FS:
         return self.workdir

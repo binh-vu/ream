@@ -52,8 +52,17 @@ class CLI:
 
     @classmethod
     def get_actor(cls, graph: ActorGraph, sysargs=None):
-        CLI = cls.prep_cli(graph, sysargs)
-        args, remain_args = yada.Parser1(CLI).parse_known_args(sysargs)
+        args, remain_args = yada.Parser1(
+            make_dataclass(
+                "CLI",
+                fields=[
+                    (field.name, field.type, field)
+                    for field in fields(cls)
+                    if field.name != "run_args" and field.name != "run"
+                ],
+            )
+        ).parse_known_args(sysargs)
+
         return graph.create_actor(
             actor_class=args.actor,
             args=remain_args,

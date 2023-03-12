@@ -22,6 +22,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+from typing_extensions import Self
 from copy import deepcopy
 import numpy as np
 import orjson
@@ -178,7 +179,7 @@ class NumpyDataModel:
         metadata: NumpyDataModelMetadata = self._metadata  # type: ignore
         return len(getattr(self, metadata.array_props[0]))
 
-    def shallow_clone(self):
+    def shallow_clone(self) -> Self:
         return self.__class__(*(getattr(self, name) for name in self.__slots__))
 
     def replace(self, field: str, value: np.ndarray):

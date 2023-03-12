@@ -1,6 +1,7 @@
 from __future__ import annotations
 import random
 import re, functools, orjson
+from typing_extensions import TypeGuard
 from typing import (
     Iterator,
     TypedDict,
@@ -19,7 +20,9 @@ from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
 import serde.pickle
 import serde.json
 
-RawSlice = TypedDict("Slice", value=int, is_percentage=bool, absolute_value=int)
+RawSlice = TypedDict(
+    "Slice", value=float, is_percentage=bool, absolute_value=Optional[int]
+)
 E2 = TypeVar("E2")
 
 
@@ -98,9 +101,66 @@ class DatasetDict(Dict[str, E]):
 
 
 @dataclass
+class AbsoluteRangeSelection:
+    start: int
+    end: int
+
+    def __len__(self):
+        return self.end - self.start
+
+    def __str__(self):
+        if self.start == 0:
+            return f"[:{self.end}]"
+        return f"[{self.start}:{self.end}]"
+
+    def select(self, array: list[E]) -> list[E]:
+        return array[self.start : self.end]
+
+
+@dataclass
+class PercentageRangeSelection:
+    start: int  # value percentage
+    end: int
+
+    def to_absolute(self, size: int) -> AbsoluteRangeSelection:
+        return AbsoluteRangeSelection(
+            start=int(size * self.start / 100), end=int(size * self.end / 100)
+        )
+
+    def __len__(self):
+        return self.end - self.start
+
+    def __str__(self):
+        if self.start == 0 and self.end == 100:
+            return ""
+        return f"[{self.start}%:{self.end}%]"
+
+    def select(self, array: list[E]) -> list[E]:
+        raise Exception(
+            "PercentageRangeSelection does not support select. Convert it to AbsoluteRangeSelection first using to_absolute"
+        )
+
+
+@dataclass
+class IndexSelection:
+    index: List[int]
+
+    def __len__(self):
+        return len(self.index)
+
+    def __str__(self):
+        return "[" + ",".join([str(i) for i in self.index]) + "]"
+
+    def select(self, array: list[E]) -> list[E]:
+        return [array[i] for i in self.index]
+
+
+@dataclass
 class DatasetQuery:
     dataset: str
-    subsets: Dict[str, Tuple[RawSlice, RawSlice]]
+    subsets: Dict[
+        str, AbsoluteRangeSelection | PercentageRangeSelection | IndexSelection
+    ]
     shuffle: bool
     seed: Optional[int]
 
@@ -110,9 +170,10 @@ class DatasetQuery:
         """Query format:
         - <dataset>:(<subset>[<start>:<end>]+)*(:shuffle)?(:seed)?
         - <dataset>[<start>:<end>](:shuffle)?(:seed)?
+        - <dataset>[number(,number)*](:shuffle)?(:seed)?
         """
         m = re.match(
-            r"^(?P<ds>[^:\[]+):?(?P<query>(?:[^\[]*\[(?:\d+\%?)?:(?:\d+\%?)?\]\+?)*)(?P<shuffle>:shuffle)?(?P<seed>:\d+)?$",
+            r"^(?P<ds>[^:\[]+):?(?P<query>(?:[^\[]*\[[^\]]+\]\+?)*)(?P<shuffle>:shuffle)?(?P<seed>:\d+)?$",
             query,
         )
         if m is None:
@@ -123,103 +184,118 @@ class DatasetQuery:
         shuffle = m.group("shuffle") is not None
         seed = int(m.group("seed")[1:]) if m.group("seed") is not None else None
 
-        subsets = {}
+        subsets: dict[
+            str, AbsoluteRangeSelection | PercentageRangeSelection | IndexSelection
+        ] = {}
         if splitquery != "":
             for subset in splitquery.split("+"):
                 m = re.match(
                     r"^(?P<sname>[^\[]*)\[(?P<start>\d+\%?)?:(?P<end>\d+\%?)\]", subset
                 )
-                assert (
-                    m is not None
-                ), f"Invalid subset spec: `{subset}` in `{splitquery}` in `{query}`"
-                slices = []
-                for name in ["end", "start"]:
-                    if name == "start" and m.group(name) is None:
+                if m is not None:
+                    slices = []
+                    for name in ["end", "start"]:
+                        if name == "start" and m.group(name) is None:
+                            slices.append(
+                                {
+                                    "value": 0,
+                                    "is_percentage": slices[-1]["is_percentage"],
+                                }
+                            )
+                            continue
+                        value = m.group(name)
+                        is_percentage = value.endswith("%")
+                        if is_percentage:
+                            value = int(value[:-1])
+                        else:
+                            value = int(value)
                         slices.append(
                             {
-                                "value": 0,
-                                "is_percentage": slices[-1]["is_percentage"],
-                                "absolute_value": 0,
+                                "value": value,
+                                "is_percentage": is_percentage,
                             }
                         )
-                        continue
-                    value = m.group(name)
-                    is_percentage = value.endswith("%")
-                    if is_percentage:
-                        value = int(value[:-1]) / 100
+
+                    assert (
+                        len({x["is_percentage"] for x in slices}) == 1
+                    ), f"Slices must be either percentage or absolute: {slices}"
+
+                    if slices[0]["is_percentage"]:
+                        subsets[m.group("sname")] = PercentageRangeSelection(
+                            slices[1]["value"], slices[0]["value"]
+                        )
                     else:
-                        value = int(value)
-                    slices.append(
-                        {
-                            "value": value,
-                            "is_percentage": is_percentage,
-                            "absolute_value": value,
-                        }
+                        subsets[m.group("sname")] = AbsoluteRangeSelection(
+                            slices[1]["value"], slices[0]["value"]
+                        )
+                else:
+                    m = re.match(
+                        r"^(?P<sname>[^\[]*)\[(?P<index>\d+(?:,\d+)*)\]", subset
                     )
-
-                assert (
-                    len({x["is_percentage"] for x in slices}) == 1
-                ), f"Slices must be either percentage or absolute: {slices}"
-
-                start = slices[1]
-                end = slices[0]
-                subsets[m.group("sname")] = (start, end)
+                    assert (
+                        m is not None
+                    ), f"Invalid subset spec: `{subset}` in `{splitquery}` in `{query}`"
+                    subsets[m.group("sname")] = IndexSelection(
+                        [int(x) for x in m.group("index").split(",")]
+                    )
         else:
-            subsets: Dict[str, Tuple[RawSlice, RawSlice]] = {
-                "": (
-                    {"value": 0, "is_percentage": True, "absolute_value": 0},
-                    {"value": 1, "is_percentage": True, "absolute_value": 1},
-                )
-            }
+            subsets: Dict[
+                str, AbsoluteRangeSelection | PercentageRangeSelection | IndexSelection
+            ] = {"": PercentageRangeSelection(0, 100)}
         return DatasetQuery(dataset, subsets, shuffle, seed)
 
     def select(self, array: List[E]) -> DatasetDict[List[E]]:
         n_exs = len(array)
 
-        if all(start["is_percentage"] for (start, end) in self.subsets.values()):
-            # convert percentage to absolute
-            for (start, end) in self.subsets.values():
-                start["absolute_value"] = int(start["value"] * n_exs)
-                end["absolute_value"] = int(end["value"] * n_exs)
-
+        # gate check for percentage range selection that select all data
+        subsets = {
+            subset: selection.to_absolute(n_exs)
+            if isinstance(selection, PercentageRangeSelection)
+            else selection
+            for subset, selection in self.subsets.items()
+        }
+        if all(isinstance(s, PercentageRangeSelection) for s in self.subsets.values()):
             total_percentage = sum(
-                [
-                    (end["value"] - start["value"]) * 100
-                    for start, end in self.subsets.values()
-                ]
+                len(selection) for selection in self.subsets.values()
             )
-            n_selected = sum(
-                [
-                    end["absolute_value"] - start["absolute_value"]
-                    for start, end in self.subsets.values()
-                ]
-            )
+            n_selected = sum(len(selection) for selection in subsets.values())
             if total_percentage == 100 and n_selected != n_exs:
                 logger.debug(
                     "Total percentage is 100%, but the number of selected examples do not match, adjusting the first subset"
                 )
                 assert n_selected < n_exs
-                for i, (start, end) in enumerate(self.subsets.values()):
+
+                for i, selection in enumerate(subsets.values()):
+                    assert isinstance(selection, AbsoluteRangeSelection)
                     if i != 0:
-                        start["absolute_value"] += n_exs - n_selected
-                    end["absolute_value"] += n_exs - n_selected
-                assert n_exs == sum(
-                    [
-                        end["absolute_value"] - start["absolute_value"]
-                        for start, end in self.subsets.values()
-                    ]
-                )
+                        selection.start += n_exs - n_selected
+                    selection.end += n_exs - n_selected
+
+                assert n_exs == sum(len(selection) for selection in subsets.values())
 
         if self.shuffle:
-            array = list(array)
-            random.Random(self.seed).shuffle(array)
+            array_index = list(range(n_exs))
+            random.Random(self.seed).shuffle(array_index)
+
+            output_subsets = {}
+            for subset, selection in subsets.items():
+                if isinstance(selection, IndexSelection):
+                    indices = set(selection.index)
+                    output_subsets[subset] = [
+                        array[i] for i in array_index if i in indices
+                    ]
+                else:
+                    output_subsets[subset] = [
+                        array[idx] for idx in selection.select(array_index)
+                    ]
+        else:
+            output_subsets = {
+                subset: selection.select(array) for subset, selection in subsets.items()
+            }
 
         return DatasetDict(
             self.dataset,
-            {
-                subset: array[start["absolute_value"] : end["absolute_value"]]
-                for subset, (start, end) in self.subsets.items()
-            },
+            output_subsets,
         )
 
     def strip(self) -> DatasetQuery:
@@ -254,25 +330,9 @@ class DatasetQuery:
         else:
             assert all(subset in self.subsets for subset in subsets)
 
-        filters = []
-        for subset in subsets:
-            start, end = self.subsets[subset]
-            if start["is_percentage"]:
-                start = f"{int(start['value'] * 100)}%"
-            else:
-                start = start["value"]
-            if end["is_percentage"]:
-                end = f"{int(end['value'] * 100)}%"
-            else:
-                end = end["value"]
-            if start == "0%" and end == "100%":
-                filters.append(f"{subset}")
-            elif start == 0:
-                filters.append(f"{subset}[:{end}]")
-            else:
-                filters.append(f"{subset}[{start}:{end}]")
-
-        filter = "+".join(filters)
+        filter = "+".join(
+            [f"{subset}{str(self.subsets[subset])}" for subset in subsets]
+        )
         if len(subsets) > 1 or "" not in subsets:
             filter = f":{filter}"
 

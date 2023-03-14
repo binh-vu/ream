@@ -26,7 +26,7 @@ RawSlice = TypedDict(
 E2 = TypeVar("E2")
 
 
-class DatasetDict(Dict[str, E]):
+class DatasetDict(dict[str, E]):
     serde: tuple[Callable, Callable, Optional[str]] = (
         serde.pickle.ser,
         serde.pickle.deser,

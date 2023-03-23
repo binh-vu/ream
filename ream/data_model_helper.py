@@ -8,6 +8,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path, PosixPath, WindowsPath
 from typing import (
     IO,
+    Annotated,
     BinaryIO,
     Callable,
     Generic,
@@ -24,6 +25,8 @@ from typing import (
 )
 from typing_extensions import Self
 from copy import deepcopy
+from nptyping import NDArray, Shape
+from nptyping.typing_ import Float64
 import numpy as np
 import orjson
 import pyarrow as pa
@@ -873,6 +876,17 @@ class NumpyDataModelHelper:
 
         return index
 
+
+class SingleNumpyArray(NumpyDataModel):
+    __slots__ = ["value"]
+
+    value: NDArray[Shape["*"], Float64]
+
+    def __init__(self, value: NDArray[Shape["*"], Float64]):
+        self.value = value
+
+
+SingleNumpyArray.init()
 
 # dir = VirtualDir("/tmp", filetrack=FileTrack())
 # print(dir.name2file, dir.filetrack)

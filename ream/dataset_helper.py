@@ -38,6 +38,10 @@ class DatasetDict(dict[str, E]):
         self.name = name
         self.provenance = provenance
 
+    def into_single_value(self) -> E:
+        assert len(self) == 1
+        return list(self.values())[0]
+
     @classmethod
     def molt(cls, obj: DatasetDict[E]):
         """Change the class of the datasetdict without changing the underlying data. This is useful
@@ -161,7 +165,7 @@ class DatasetQuery:
     subsets: Dict[
         str, AbsoluteRangeSelection | PercentageRangeSelection | IndexSelection
     ]
-    shuffle: bool
+    shuffle: bool  # the shuffle is done before splitting
     seed: Optional[int]
 
     @staticmethod
@@ -171,9 +175,10 @@ class DatasetQuery:
         - <dataset>:(<subset>[<start>:<end>]+)*(:shuffle)?(:seed)?
         - <dataset>[<start>:<end>](:shuffle)?(:seed)?
         - <dataset>[number(,number)*](:shuffle)?(:seed)?
+        - <dataset>:<subset>
         """
         m = re.match(
-            r"^(?P<ds>[^:\[]+):?(?P<query>(?:[^\[]*\[[^\]]+\]\+?)*)(?P<shuffle>:shuffle)?(?P<seed>:\d+)?$",
+            r"^(?P<ds>[^:\[]+):?(?P<query>(?:[^\[]*\[?[^\]]+\]?\+?)*)(?P<shuffle>:shuffle)?(?P<seed>:\d+)?$",
             query,
         )
         if m is None:
@@ -190,54 +195,58 @@ class DatasetQuery:
         if splitquery != "":
             for subset in splitquery.split("+"):
                 m = re.match(
-                    r"^(?P<sname>[^\[]*)\[(?P<start>\d+\%?)?:(?P<end>\d+\%?)\]", subset
+                    r"^(?P<sname>[^\[]*)\[(?P<start>\d+\%?)?:(?P<end>\d+\%?)?\]", subset
                 )
                 if m is not None:
-                    slices = []
-                    for name in ["end", "start"]:
-                        if name == "start" and m.group(name) is None:
-                            slices.append(
-                                {
-                                    "value": 0,
-                                    "is_percentage": slices[-1]["is_percentage"],
-                                }
-                            )
-                            continue
-                        value = m.group(name)
-                        is_percentage = value.endswith("%")
-                        if is_percentage:
-                            value = int(value[:-1])
-                        else:
-                            value = int(value)
-                        slices.append(
-                            {
-                                "value": value,
-                                "is_percentage": is_percentage,
-                            }
-                        )
+                    grpstart = m.group("start")
+                    grpend = m.group("end")
 
-                    assert (
-                        len({x["is_percentage"] for x in slices}) == 1
-                    ), f"Slices must be either percentage or absolute: {slices}"
-
-                    if slices[0]["is_percentage"]:
-                        subsets[m.group("sname")] = PercentageRangeSelection(
-                            slices[1]["value"], slices[0]["value"]
+                    is_percentage = (
+                        any(
+                            [
+                                grp.endswith("%")
+                                for grp in [grpstart, grpend]
+                                if grp is not None
+                            ]
                         )
+                        or grpend is None
+                    )
+
+                    if grpstart is None:
+                        start = 0
                     else:
-                        subsets[m.group("sname")] = AbsoluteRangeSelection(
-                            slices[1]["value"], slices[0]["value"]
+                        start = (
+                            int(grpstart[:-1])
+                            if grpstart.endswith("%")
+                            else int(grpstart)
                         )
+
+                    if grpend is None:
+                        assert (
+                            is_percentage
+                        ), "do not support lazy initialization to mixed between absolute and percentage selection"
+                        end = 100
+                    else:
+                        end = int(grpend[:-1]) if grpend.endswith("%") else int(grpend)
+
+                    if is_percentage:
+                        subsets[m.group("sname")] = PercentageRangeSelection(start, end)
+                    else:
+                        subsets[m.group("sname")] = AbsoluteRangeSelection(start, end)
                 else:
                     m = re.match(
                         r"^(?P<sname>[^\[]*)\[(?P<index>\d+(?:,\d+)*)\]", subset
                     )
-                    assert (
-                        m is not None
-                    ), f"Invalid subset spec: `{subset}` in `{splitquery}` in `{query}`"
-                    subsets[m.group("sname")] = IndexSelection(
-                        [int(x) for x in m.group("index").split(",")]
-                    )
+                    if m is not None:
+                        subsets[m.group("sname")] = IndexSelection(
+                            [int(x) for x in m.group("index").split(",")]
+                        )
+                    else:
+                        m = re.match(r"^(?P<sname>[a-zA-Z]+)$", subset)
+                        assert (
+                            m is not None
+                        ), f"Invalid subset spec: `{subset}` in `{splitquery}` in `{query}`"
+                        subsets[m.group("sname")] = PercentageRangeSelection(0, 100)
         else:
             subsets: Dict[
                 str, AbsoluteRangeSelection | PercentageRangeSelection | IndexSelection

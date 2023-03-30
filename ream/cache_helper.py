@@ -869,8 +869,8 @@ class Cacheable:
         disable: set to True to disable caching. The wrapper method needs to use this flag to be effective!
     """
 
-    def __init__(self, workdir: Path, disable: bool = False):
-        self.workdir = FS(workdir)
+    def __init__(self, workdir: Union[FS, Path], disable: bool = False):
+        self.workdir = FS(workdir) if isinstance(workdir, Path) else workdir
         self.logger = logger.bind(name=self.__class__.__name__)
 
         self.disable = disable

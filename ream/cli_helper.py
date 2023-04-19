@@ -42,7 +42,7 @@ class CLI:
         logger.debug("Finished preparing arguments. Start the graph!")
         graph.run(
             actor_class=args.actor,
-            actor_method="evaluate",
+            actor_method=args.run,
             run_args=[getattr(args.run_args, f.name) for f in fields(args.run_args)],
             args=remain_args,
             log_file=args.logfile,

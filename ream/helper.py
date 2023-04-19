@@ -1,3 +1,7 @@
+import atexit
+import cProfile
+from contextlib import contextmanager
+import functools
 from pathlib import Path
 import sys
 from typing import Type, TypeVar, Union, get_args, get_origin, Tuple
@@ -132,3 +136,57 @@ def has_dict_with_nonstr_keys(ann):
     if origin is dict and args[0] is not str:
         return True
     return any(has_dict_with_nonstr_keys(arg) for arg in args)
+
+
+@contextmanager
+def profile(
+    outfile: Union[str, Path] = "/tmp/profile.prof",
+    engine="yappi",
+    clock="wall",
+    output_type="pstat",
+):
+    """Profile the execution of the code using Yappi"""
+    if engine == "yappi":
+        import yappi
+
+        yappi.set_clock_type(clock)
+        try:
+            yappi.start(builtins=True, profile_threads=False)
+            yield
+        finally:
+            yappi.stop()
+            stats = yappi.get_func_stats()
+            stats.save(outfile, type=output_type)
+    else:
+        profile = cProfile.Profile()
+        try:
+            profile.enable()
+            yield
+        finally:
+            profile.disable()
+            profile.dump_stats(outfile)
+
+
+def profile_fn(
+    outfile: Union[str, Path] = "/tmp/profile.prof",
+):
+    profile = cProfile.Profile()
+
+    def flush_profile():
+        profile.disable()
+        profile.dump_stats(outfile)
+
+    atexit.register(flush_profile)
+
+    def wrapper_fn(func):
+        @functools.wraps(func)
+        def fn(*args, **kwargs):
+            try:
+                profile.enable()
+                return func(*args, **kwargs)
+            finally:
+                profile.disable()
+
+        return fn
+
+    return wrapper_fn  # type: ignore

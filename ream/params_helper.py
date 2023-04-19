@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import Field, asdict, dataclass, fields, is_dataclass, replace
 from typing import Any, Dict, List, Type, Union
 

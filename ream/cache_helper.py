@@ -440,7 +440,7 @@ class Cache:
                     with fs.acquire_write_lock(), cache_file.reserve_and_track() as fpath:
                         if log_serde_time:
                             with Timer().watch_and_report(
-                                f"serialize file {cache_file.relpath}",
+                                f"serialize file {cache_file._realdiskpath}",
                                 self.logger.debug,
                             ):
                                 ser(output, fpath)
@@ -449,7 +449,8 @@ class Cache:
                 else:
                     if log_serde_time:
                         with Timer().watch_and_report(
-                            f"deserialize file {cache_file.relpath}", self.logger.debug
+                            f"deserialize file {cache_file._realdiskpath}",
+                            self.logger.debug,
                         ):
                             output = deser(cache_file.get())
                     else:
@@ -558,7 +559,7 @@ class Cache:
                     with fs.acquire_write_lock(), cache_file.reserve_and_track() as fpath:
                         if log_serde_time:
                             with Timer().watch_and_report(
-                                f"serialize file {cache_file.relpath}",
+                                f"serialize file {cache_file._realdiskpath}",
                                 self.logger.debug,
                             ):
                                 ser(output, fpath, compression)
@@ -567,7 +568,8 @@ class Cache:
                 else:
                     if log_serde_time:
                         with Timer().watch_and_report(
-                            f"deserialize file {cache_file.relpath}", self.logger.debug
+                            f"deserialize file {cache_file._realdiskpath}",
+                            self.logger.debug,
                         ):
                             output = deser(cache_file.get(), compression)
                     else:

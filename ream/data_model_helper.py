@@ -26,7 +26,7 @@ from typing import (
 from typing_extensions import Self
 from copy import deepcopy
 from nptyping import NDArray, Shape
-from nptyping.typing_ import Float64
+from nptyping.typing_ import Float64, Number
 import numpy as np
 import orjson
 import pyarrow as pa
@@ -186,7 +186,10 @@ class NumpyDataModel:
         return self.__class__(*(getattr(self, name) for name in self.__slots__))
 
     def replace(self, field: str, value: np.ndarray):
-        assert getattr(self, field).shape == value.shape
+        assert getattr(self, field).shape == value.shape, (
+            getattr(self, field).shape,
+            value.shape,
+        )
         newobj = self.shallow_clone()
         setattr(newobj, field, value)
         return newobj
@@ -880,9 +883,9 @@ class NumpyDataModelHelper:
 class SingleNumpyArray(NumpyDataModel):
     __slots__ = ["value"]
 
-    value: NDArray[Shape["*"], Float64]
+    value: NDArray[Shape["*"], Number]
 
-    def __init__(self, value: NDArray[Shape["*"], Float64]):
+    def __init__(self, value: NDArray[Shape["*"], Number]):
         self.value = value
 
 

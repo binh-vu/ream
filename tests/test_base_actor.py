@@ -9,7 +9,7 @@ class CanGenParams:
     query_type: Literal["exact-match", "fuzzy-match"]
 
 
-class CandidateGeneration(BaseActor[List[str], CanGenParams]):
+class CandidateGeneration(BaseActor[CanGenParams]):
     VERSION = 100
 
     def run(self, queries: List[str]):

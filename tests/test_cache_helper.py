@@ -6,7 +6,7 @@ from ream.cache_helper import CacheArgsHelper
 from ream.prelude import BaseActor, NoParams
 
 
-class CandidateGeneration(BaseActor[List[str], NoParams]):
+class CandidateGeneration(BaseActor[NoParams]):
     VERSION = 100
 
     def __init__(self, params: NoParams):

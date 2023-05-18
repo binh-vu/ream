@@ -39,6 +39,7 @@ class FS:
         diskpath: Optional[str] = None,
         save_key: bool = False,
         subdir: bool = False,
+        subdir_incr: bool = False,
     ) -> FSPath:
         """Get a path associated with a virtual relpath with key.
 
@@ -80,6 +81,7 @@ class FS:
             ser_key=ser_key,
             save_key=save_key,
             subdir=subdir,
+            subdir_incr=subdir_incr,
             fs=self,
         )
 
@@ -116,7 +118,8 @@ class FSPath:
     diskpath: str
     ser_key: bytes
     save_key: bool
-    subdir: bool
+    subdir: bool  # whether to create a subdirectory for different keys
+    subdir_incr: bool  # whether to name the subdirectory with an incremental number or to use the last row number
     fs: FS
     _id: Optional[int] = None
     _status: Optional[ItemStatus] = None
@@ -202,7 +205,19 @@ class FSPath:
                 pdiskpath = Path(self.diskpath)
                 ext = "".join(pdiskpath.suffixes)
                 if self.subdir and ext == "":
-                    self._realdiskpath = str(pdiskpath / f"{last_id + 1:03d}")
+                    if self.subdir_incr:
+                        dirs = [
+                            int(d.name)
+                            for d in pdiskpath.iterdir()
+                            if d.is_dir() and d.name.isdigit()
+                        ]
+                        if len(dirs) == 0:
+                            subdirname = f"{0:03d}"
+                        else:
+                            subdirname = f"{max(dirs) + 1:03d}"
+                        self._realdiskpath = str(pdiskpath / subdirname)
+                    else:
+                        self._realdiskpath = str(pdiskpath / f"{last_id + 1:03d}")
                 else:
                     self._realdiskpath = str(
                         pdiskpath.parent

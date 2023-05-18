@@ -1,8 +1,6 @@
 from __future__ import annotations
 from dataclasses import is_dataclass
-import functools
 import os
-from pathlib import Path
 from typing import (
     Optional,
     List,
@@ -16,12 +14,21 @@ from ream.params_helper import EnumParams
 from ream.fs import FS
 from ream.workspace import ReamWorkspace
 from loguru import logger
-from ream.actors.interface import Actor, E
+from ream.actors.interface import Actor
 
 P = TypeVar("P")
 
 
-class BaseActor(Generic[E, P], Actor[E]):
+class BaseActor(Actor, Generic[P]):
+    """A based for parameterized actor that its output is always determisitic given: the input, actor's state, and actor's provenance.
+
+    The actor's provenance is an optional mechanism to provide additional guarantee to always have deterministic output if
+    the combination of input and actor's state is not sufficient. For example, training a model with a random seed and the store the model
+    for later use, the provenance can be the path to the model. Normally, we advise to avoid using provenance if possible.
+
+    The actor state is determined based on: its parameters and the dependant actors' states.
+    """
+
     def __init__(
         self,
         params: P,

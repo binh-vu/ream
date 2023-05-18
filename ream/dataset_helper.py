@@ -14,7 +14,6 @@ from typing import (
 )
 from loguru import logger
 from dataclasses import dataclass
-from ream.actors.interface import E
 from pathlib import Path
 from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
 import serde.pickle
@@ -23,6 +22,7 @@ import serde.json
 RawSlice = TypedDict(
     "Slice", value=float, is_percentage=bool, absolute_value=Optional[int]
 )
+E = TypeVar("E")
 E2 = TypeVar("E2")
 
 
@@ -33,7 +33,7 @@ class DatasetDict(dict[str, E]):
         "pkl",
     )
 
-    def __init__(self, name: str, subsets: Dict[str, E], provenance: str = ""):
+    def __init__(self, name: str, subsets: dict[str, E], provenance: str = ""):
         super().__init__(subsets)
         self.name = name
         self.provenance = provenance
@@ -104,6 +104,59 @@ class DatasetDict(dict[str, E]):
         return ds
 
 
+class DatasetList(list[E]):
+    serde: tuple[Callable, Callable, Optional[str]] = (
+        serde.pickle.ser,
+        serde.pickle.deser,
+        "pkl",
+    )
+
+    def __init__(self, name: str, items: list[E], provenance: str = ""):
+        super().__init__(items)
+        self.name = name
+        self.provenance = provenance
+
+    def map(self, fn: Callable[[E], E2]) -> DatasetList[E2]:
+        """Transform dataset from DatasetList[E] to DatasetList[E2]"""
+        return DatasetList(self.name, [fn(item) for item in self], self.provenance)
+
+    def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+        (dir / "metadata.json").write_bytes(
+            orjson.dumps(
+                {
+                    "name": self.name,
+                    "provenance": self.provenance,
+                }
+            )
+        )
+
+        fileext = self.serde[2]
+        if fileext is not None:
+            filename = f"data.{fileext}"
+            filepath = get_filepath(dir / filename, compression)
+            self.serde[0](list(self), filepath)
+        else:
+            filename = "data"
+            self.serde[0](list(self), dir / "data", compression)
+
+    @classmethod
+    def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+        metadata = serde.json.deser(dir / "metadata.json")
+        name = metadata["name"]
+        provenance = metadata["provenance"]
+
+        fileext = cls.serde[2]
+        if fileext is not None:
+            filename = f"data.{fileext}"
+            filepath = get_filepath(dir / filename, compression)
+            lst = cls.serde[1](filepath)
+        else:
+            filepath = dir / "data"
+            lst = cls.serde[1](filepath, compression)
+
+        return cls(name, lst, provenance)
+
+
 @dataclass
 class AbsoluteRangeSelection:
     start: int
@@ -147,7 +200,7 @@ class PercentageRangeSelection:
 
 @dataclass
 class IndexSelection:
-    index: List[int]
+    index: list[int]
 
     def __len__(self):
         return len(self.index)
@@ -162,7 +215,7 @@ class IndexSelection:
 @dataclass
 class DatasetQuery:
     dataset: str
-    subsets: Dict[
+    subsets: dict[
         str, AbsoluteRangeSelection | PercentageRangeSelection | IndexSelection
     ]
     shuffle: bool  # the shuffle is done before splitting
@@ -248,12 +301,12 @@ class DatasetQuery:
                         ), f"Invalid subset spec: `{subset}` in `{splitquery}` in `{query}`"
                         subsets[m.group("sname")] = PercentageRangeSelection(0, 100)
         else:
-            subsets: Dict[
+            subsets: dict[
                 str, AbsoluteRangeSelection | PercentageRangeSelection | IndexSelection
             ] = {"": PercentageRangeSelection(0, 100)}
         return DatasetQuery(dataset, subsets, shuffle, seed)
 
-    def select(self, array: List[E]) -> DatasetDict[List[E]]:
+    def select(self, array: list[E]) -> DatasetDict[list[E]]:
         n_exs = len(array)
 
         # gate check for percentage range selection that select all data
@@ -307,6 +360,10 @@ class DatasetQuery:
             output_subsets,
         )
 
+    def select_list(self, array: list[E]) -> DatasetList[E]:
+        assert len(self.subsets) == 1 and "" in self.subsets
+        return DatasetList(self.dataset, self.select(array)[""])
+
     def strip(self) -> DatasetQuery:
         """Remove the subset name from the query. Error when there are multiple subsets."""
         if len(self.subsets) > 1:
@@ -330,7 +387,7 @@ class DatasetQuery:
         """Iterate over the subsets in the query."""
         return ((subset, self.subset(subset)) for subset in self.subsets)
 
-    def get_query(self, subsets: Optional[str | List[str]] = None) -> str:
+    def get_query(self, subsets: Optional[str | list[str]] = None) -> str:
         """Generate a query string for retrieving the subsets of the dataset."""
         if subsets is None:
             subsets = list(self.subsets.keys())
@@ -347,5 +404,5 @@ class DatasetQuery:
 
         return f"{self.dataset}{filter}{':shuffle' if self.shuffle else ''}{f':{self.seed}' if self.seed is not None else ''}"
 
-    def get_subset_disk_names(self) -> Dict[str, str]:
+    def get_subset_disk_names(self) -> dict[str, str]:
         return {name: "_empty" if name == "" else name for name in self.subsets.keys()}

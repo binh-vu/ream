@@ -34,7 +34,12 @@ class ReamWorkspace:
         key = state.to_dict()
         diskpath = f"{state.get_classname()}/v{classversion}"
         path = self.fs.get(
-            relpath=relpath, key=key, diskpath=diskpath, save_key=True, subdir=True
+            relpath=relpath,
+            key=key,
+            diskpath=diskpath,
+            save_key=True,
+            subdir=True,
+            subdir_incr=True,
         )
 
         if path.exists():

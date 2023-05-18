@@ -38,7 +38,7 @@ class ActorState:
             assert hasattr(CLS, "VERSION"), f"Class {CLS} must have a VERSION attribute"
             version = getattr(CLS, "VERSION")
 
-        assert isinstance(
+        assert version is not None and isinstance(
             version, (int, str, ActorVersion)
         ), "Version must be a string, a number, or an ActorVersion"
 

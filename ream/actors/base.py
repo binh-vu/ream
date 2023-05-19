@@ -88,9 +88,9 @@ class BaseActor(Actor, Generic[P]):
     def get_param_cls(cls) -> Type[P]:
         """Get the parameter class of this actor"""
         args = resolve_type_arguments(BaseActor, cls)
-        assert len(args) == 2
-        assert is_dataclass(args[1])
-        return args[1]  # type: ignore
+        assert len(args) == 1
+        assert is_dataclass(args[0])
+        return args[0]  # type: ignore
 
     def get_verbose_level(self) -> int:
         """Get the verbose level of this actor from the environment variable"""

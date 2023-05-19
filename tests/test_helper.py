@@ -16,7 +16,4 @@ class CandidateGeneration(BaseActor[CanGenParams]):
 
 
 def test_resolve_type_arguments():
-    assert resolve_type_arguments(BaseActor, CandidateGeneration) == (
-        List[str],
-        CanGenParams,
-    )
+    assert resolve_type_arguments(BaseActor, CandidateGeneration) == (CanGenParams,)

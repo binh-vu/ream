@@ -7,8 +7,6 @@ import struct
 from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path, PosixPath, WindowsPath
 from typing import (
-    IO,
-    Annotated,
     BinaryIO,
     Callable,
     Generic,

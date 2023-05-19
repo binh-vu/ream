@@ -26,7 +26,7 @@ E = TypeVar("E")
 E2 = TypeVar("E2")
 
 
-class DatasetDict(dict[str, E]):
+class DatasetDict(Dict[str, E]):
     serde: tuple[Callable, Callable, Optional[str]] = (
         serde.pickle.ser,
         serde.pickle.deser,
@@ -104,7 +104,7 @@ class DatasetDict(dict[str, E]):
         return ds
 
 
-class DatasetList(list[E]):
+class DatasetList(List[E]):
     serde: tuple[Callable, Callable, Optional[str]] = (
         serde.pickle.ser,
         serde.pickle.deser,

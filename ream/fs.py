@@ -206,11 +206,14 @@ class FSPath:
                 ext = "".join(pdiskpath.suffixes)
                 if self.subdir and ext == "":
                     if self.subdir_incr:
-                        dirs = [
-                            int(d.name)
-                            for d in pdiskpath.iterdir()
-                            if d.is_dir() and d.name.isdigit()
-                        ]
+                        if (self.fs.root / pdiskpath).exists():
+                            dirs = [
+                                int(d.name)
+                                for d in (self.fs.root / pdiskpath).iterdir()
+                                if d.is_dir() and d.name.isdigit()
+                            ]
+                        else:
+                            dirs = []
                         if len(dirs) == 0:
                             subdirname = f"{0:03d}"
                         else:

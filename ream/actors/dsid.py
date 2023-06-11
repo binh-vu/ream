@@ -6,7 +6,7 @@ from ream.dataset_helper import DatasetList, E
 from contextlib import contextmanager
 
 
-class IDDSActor(ABC, BaseActor[P], Generic[E, P]):
+class IDDSActor(ABC, Generic[E, P], BaseActor[P]):
     """A actor that is responsible for querying the dataset."""
 
     def __init__(self, params: P, dep_actor: Optional[list[BaseActor]] = None):

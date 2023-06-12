@@ -1,22 +1,36 @@
 from __future__ import annotations
-from dataclasses import is_dataclass
+
 import os
-from typing import (
-    Optional,
-    List,
-    Type,
-    TypeVar,
-    Generic,
-)
+from dataclasses import is_dataclass
+from typing import TYPE_CHECKING, Generic, List, Optional, Protocol, Type, TypeVar
+
+from loguru import logger
+
 from ream.actor_state import ActorState
+from ream.actors.interface import Actor
+from ream.fs import FS
 from ream.helper import resolve_type_arguments
 from ream.params_helper import EnumParams
-from ream.fs import FS
 from ream.workspace import ReamWorkspace
-from loguru import logger
-from ream.actors.interface import Actor
 
-P = TypeVar("P")
+if TYPE_CHECKING:
+    from loguru import Logger
+
+P = TypeVar("P", covariant=True)
+
+
+class BaseActorProtocol(Protocol[P]):
+    @property
+    def params(self) -> P:
+        ...
+
+    @property
+    def logger(self) -> Logger:
+        ...
+
+    @property
+    def dep_actors(self) -> list[BaseActorProtocol]:
+        ...
 
 
 class BaseActor(Actor, Generic[P]):

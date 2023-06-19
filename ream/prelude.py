@@ -1,23 +1,20 @@
+from ream.actor_graph import ActorEdge, ActorGraph, ActorNode
 from ream.actor_state import ActorState
 from ream.actor_version import ActorVersion
-from ream.fs import FS, FSPath
-from ream.params_helper import (
-    EnumParams,
-    NoParams,
-    param_as_dict,
-)
-from ream.workspace import ReamWorkspace
-from ream.actors.interface import Actor
 from ream.actors.base import BaseActor
-from ream.actor_graph import ActorGraph, ActorNode, ActorEdge
-from ream.dataset_helper import DatasetQuery, DatasetDict
-from ream.cache_helper import Cache, CacheArgsHelper, Cacheable
-from ream.helper import configure_loguru
+from ream.actors.interface import Actor
+from ream.cache_helper import Cache, Cacheable, CacheArgsHelper
 from ream.data_model_helper import (
     NumpyDataModel,
     NumpyDataModelContainer,
     NumpyDataModelHelper,
+    SingleNumpyArray,
 )
+from ream.dataset_helper import DatasetDict, DatasetQuery
+from ream.fs import FS, FSPath
+from ream.helper import configure_loguru
+from ream.params_helper import EnumParams, NoParams, param_as_dict
+from ream.workspace import ReamWorkspace
 
 __all__ = [
     "Actor",
@@ -42,4 +39,5 @@ __all__ = [
     "NumpyDataModel",
     "NumpyDataModelContainer",
     "NumpyDataModelHelper",
+    "SingleNumpyArray",
 ]

@@ -1,38 +1,39 @@
 from __future__ import annotations
 
+import bz2
 import functools
 import gzip
-import bz2
-from inspect import Parameter, signature
+import pickle
 from collections.abc import Sequence
+from contextlib import contextmanager
+from inspect import Parameter, signature
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Iterable,
     Literal,
     Optional,
     Protocol,
+    Sequence,
     Type,
     TypeVar,
     Union,
     get_args,
     get_origin,
     get_type_hints,
-    Sequence,
-    TYPE_CHECKING,
 )
-import pickle
-from typing_extensions import Self
-from loguru import logger
-from ream.fs import FS
 
 import serde.prelude as serde
-from timer import Timer
+from hugedict.misc import Chain2, identity
+from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
+from loguru import logger
+from ream.fs import FS
 from ream.helper import orjson_dumps
 from serde.helper import AVAILABLE_COMPRESSIONS, JsonSerde
-from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
-from hugedict.misc import identity, Chain2
+from timer import Timer
+from typing_extensions import Self
 
 try:
     import lz4.frame as lz4_frame  # type: ignore
@@ -278,6 +279,13 @@ class Cache:
     jl = JLSerdeCache
     pickle = PickleSerdeCache
     cls = ClsSerdeCache
+
+    @staticmethod
+    @contextmanager
+    def autoclear_mem_cache(obj: object, cache_attr: str = "_cache"):
+        yield None
+        if hasattr(obj, cache_attr):
+            getattr(obj, cache_attr).clear()
 
     @staticmethod
     def mem(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from copy import deepcopy
+from functools import partial
 from dataclasses import Field, asdict, dataclass, fields, is_dataclass, replace
 from typing import Any, Dict, List, Type, Union
 
@@ -56,6 +57,17 @@ class EnumParams:
     def get_method_class(self, method_field: Field) -> Type:
         method = getattr(self, method_field.name)
         return method_field.metadata["variants"][method]
+
+    def get_method_constructor(self, method_field: Field, **kwargs):
+        method = getattr(self, method_field.name)
+        if (
+            "variant_constructors" in method_field.metadata
+            and method in method_field.metadata["variant_constructors"]
+        ):
+            return partial(
+                method_field.metadata["variant_constructors"][method], **kwargs
+            )
+        return partial(self.get_method_class(method_field), **kwargs)
 
     def get_method_params(self, method_field: Field) -> DataClassInstance:
         method = getattr(self, method_field.name)

@@ -4,6 +4,7 @@ import bz2
 import functools
 import gzip
 import pickle
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from contextlib import contextmanager
 from inspect import Parameter, signature
@@ -12,6 +13,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    Generic,
     Iterable,
     Literal,
     Optional,
@@ -25,15 +27,17 @@ from typing import (
     get_type_hints,
 )
 
+import orjson
 import serde.prelude as serde
 from hugedict.misc import Chain2, identity
 from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from loguru import logger
-from ream.fs import FS
-from ream.helper import orjson_dumps
 from serde.helper import AVAILABLE_COMPRESSIONS, JsonSerde
 from timer import Timer
 from typing_extensions import Self
+
+from ream.fs import FS
+from ream.helper import orjson_dumps
 
 try:
     import lz4.frame as lz4_frame  # type: ignore
@@ -282,10 +286,13 @@ class Cache:
 
     @staticmethod
     @contextmanager
-    def autoclear_mem_cache(obj: object, cache_attr: str = "_cache"):
+    def autoclear_mem_cache(
+        objs: Union[object, list[object]], cache_attr: str = "_cache"
+    ):
         yield None
-        if hasattr(obj, cache_attr):
-            getattr(obj, cache_attr).clear()
+        for obj in objs if isinstance(objs, list) else [objs]:
+            if hasattr(obj, cache_attr):
+                getattr(obj, cache_attr).clear()
 
     @staticmethod
     def mem(
@@ -887,6 +894,43 @@ class Cacheable:
 
     def get_working_fs(self) -> FS:
         return self.workdir
+
+
+class CacheableFn(ABC, Cacheable):
+    """This utility provides a way to break a giantic function into smaller pieces that can be cached individually."""
+
+    def __init__(
+        self, use_args: list[str], workdir: Union[FS, Path], disable: bool = False
+    ):
+        super().__init__(workdir, disable)
+        self.use_args = use_args
+
+    @staticmethod
+    def get_cache_key(slf: CacheableFn, args: F) -> bytes:
+        return orjson.dumps(
+            {attr: getattr(args, attr) for attr in slf.get_use_args()},
+            option=orjson.OPT_SORT_KEYS | orjson.OPT_SERIALIZE_DATACLASS,
+        )
+
+    @functools.lru_cache()
+    def get_use_args(self) -> set[str]:
+        cache_args = set()
+        for fn in self.get_dependable_fns():
+            cache_args.update(fn.get_use_args())
+        return cache_args
+
+    @functools.lru_cache()
+    def get_dependable_fns(self) -> list[CacheableFn]:
+        fns = []
+        for obj in self.__dict__.values():
+            if isinstance(obj, CacheableFn):
+                fns.append(obj)
+        return fns
+
+    @abstractmethod
+    def __call__(self, args):
+        """This is where to put the function body. To cache it, wraps it with @Cache.<X> decorators"""
+        ...
 
 
 class SaveLoadProtocol(Protocol):

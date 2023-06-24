@@ -472,7 +472,7 @@ class Cache:
                         output = deser(cache_file.get())
                 return output
 
-            if mem_persist is not None:
+            if mem_persist:
                 return Cache.mem(
                     cache_args=cache_args,
                     cache_self_args=cache_self_args,
@@ -591,7 +591,7 @@ class Cache:
                         output = deser(cache_file.get(), compression)
                 return output
 
-            if mem_persist is not None:
+            if mem_persist:
                 return Cache.mem(
                     cache_args=cache_args,
                     cache_self_args=cache_self_args,
@@ -725,7 +725,7 @@ class Cache:
                         output = deser(sqlitedict[key])
                 return output
 
-            if mem_persist is not None:
+            if mem_persist:
                 return Cache.mem(
                     cache_args=cache_args,
                     cache_self_args=cache_self_args,

@@ -8,6 +8,7 @@ from ream.data_model_helper import (
     NumpyDataModel,
     NumpyDataModelContainer,
     NumpyDataModelHelper,
+    Single2DNumpyArray,
     SingleNumpyArray,
 )
 from ream.dataset_helper import DatasetDict, DatasetQuery
@@ -40,4 +41,5 @@ __all__ = [
     "NumpyDataModelContainer",
     "NumpyDataModelHelper",
     "SingleNumpyArray",
+    "Single2DNumpyArray",
 ]

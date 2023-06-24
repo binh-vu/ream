@@ -1,10 +1,11 @@
 from __future__ import annotations
-from io import BufferedReader, BytesIO
-import os
 
+import os
 import pickle
 import struct
+from copy import deepcopy
 from dataclasses import dataclass, fields, is_dataclass
+from io import BufferedReader, BytesIO
 from pathlib import Path, PosixPath, WindowsPath
 from typing import (
     BinaryIO,
@@ -21,24 +22,20 @@ from typing import (
     get_origin,
     get_type_hints,
 )
-from typing_extensions import Self
-from copy import deepcopy
-from nptyping import NDArray, Shape
-from nptyping.typing_ import Float64, Number
+
 import numpy as np
 import orjson
 import pyarrow as pa
 import pyarrow.parquet as pq
+from nptyping import NDArray, Shape
 from nptyping.ndarray import NDArrayMeta  # type: ignore
 from nptyping.shape_expression import get_dimensions  # type: ignore
-from ream.helper import has_dict_with_nonstr_keys
-from serde.helper import (
-    AVAILABLE_COMPRESSIONS,
-    get_filepath,
-    get_open_fn,
-)
+from nptyping.typing_ import Number
+from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath, get_open_fn
 from tqdm import tqdm
+from typing_extensions import Self
 
+from ream.helper import has_dict_with_nonstr_keys
 
 T = TypeVar("T")
 
@@ -887,7 +884,17 @@ class SingleNumpyArray(NumpyDataModel):
         self.value = value
 
 
+class Single2DNumpyArray(NumpyDataModel):
+    __slots__ = ["value"]
+
+    value: NDArray[Shape["*,*"], Number]
+
+    def __init__(self, value: NDArray[Shape["*,*"], Number]):
+        self.value = value
+
+
 SingleNumpyArray.init()
+Single2DNumpyArray.init()
 
 # dir = VirtualDir("/tmp", filetrack=FileTrack())
 # print(dir.name2file, dir.filetrack)

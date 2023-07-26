@@ -27,15 +27,16 @@ import numpy as np
 import orjson
 import pyarrow as pa
 import pyarrow.parquet as pq
+import serde.json
 from nptyping import NDArray, Shape
 from nptyping.ndarray import NDArrayMeta  # type: ignore
 from nptyping.shape_expression import get_dimensions  # type: ignore
 from nptyping.typing_ import Number
+from ream.helper import get_classpath, has_dict_with_nonstr_keys
 from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath, get_open_fn
+from sm.misc.funcs import import_attr
 from tqdm import tqdm
 from typing_extensions import Self
-
-from ream.helper import has_dict_with_nonstr_keys
 
 T = TypeVar("T")
 
@@ -895,6 +896,27 @@ class Single2DNumpyArray(NumpyDataModel):
 
 SingleNumpyArray.init()
 Single2DNumpyArray.init()
+
+
+def ser_dict_array(
+    odict: dict[str, NumpyDataModel],
+    dir: Path,
+    compression: Optional[AVAILABLE_COMPRESSIONS],
+):
+    classes = {}
+    for key, value in odict.items():
+        value.save(dir / key, compression=compression)
+        classes[key] = get_classpath(value.__class__)
+    serde.json.ser(classes, dir / "metadata.json")
+
+
+def deser_dict_array(dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS]):
+    classes = serde.json.deser(dir / "metadata.json")
+    objects = {}
+    for key, cls in classes.items():
+        objects[key] = import_attr(cls).load(dir / key, compression=compression)
+    return objects
+
 
 # dir = VirtualDir("/tmp", filetrack=FileTrack())
 # print(dir.name2file, dir.filetrack)

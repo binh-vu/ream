@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 import bz2
-import functools
 import gzip
 import pickle
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from contextlib import contextmanager
+from functools import lru_cache, partial, wraps
 from inspect import Parameter, signature
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Generic,
     Iterable,
     Literal,
     Optional,
@@ -32,12 +31,11 @@ import serde.prelude as serde
 from hugedict.misc import Chain2, identity
 from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from loguru import logger
+from ream.fs import FS
+from ream.helper import orjson_dumps
 from serde.helper import AVAILABLE_COMPRESSIONS, JsonSerde
 from timer import Timer
 from typing_extensions import Self
-
-from ream.fs import FS
-from ream.helper import orjson_dumps
 
 try:
     import lz4.frame as lz4_frame  # type: ignore
@@ -70,7 +68,7 @@ class JLSerdeCache:
     ):
         return Cache.file(
             ser=serde.jl.ser,
-            deser=functools.partial(serde.jl.deser, cls=cls),
+            deser=partial(serde.jl.deser, cls=cls),  # type: ignore
             cache_args=cache_args,
             cache_self_args=cache_self_args,
             cache_key=cache_key,
@@ -335,7 +333,7 @@ class Cache:
                     )
                 )
 
-            @functools.wraps(func)
+            @wraps(func)
             def fn(self, *args, **kwargs):
                 if not isinstance(disable, bool):
                     is_disable = (
@@ -428,7 +426,7 @@ class Cache:
                     cache_args_helper.get_args(self, *args, **kwargs)
                 )
 
-            @functools.wraps(func)
+            @wraps(func)
             def fn(self: HasWorkingFsTrait, *args, **kwargs):
                 if not isinstance(disable, bool):
                     is_disable = (
@@ -547,7 +545,7 @@ class Cache:
                     cache_args_helper.get_args(self, *args, **kwargs)
                 )
 
-            @functools.wraps(func)
+            @wraps(func)
             def fn(self: HasWorkingFsTrait, *args, **kwargs):
                 if not isinstance(disable, bool):
                     is_disable = (
@@ -671,7 +669,7 @@ class Cache:
             dbname = f"{fname}.db"
             dbattr = f"__sqlite_{fname}"
 
-            @functools.wraps(func)
+            @wraps(func)
             def fn(self: HasWorkingFsTrait, *args, **kwargs):
                 if not isinstance(disable, bool):
                     is_disable = (
@@ -912,14 +910,14 @@ class CacheableFn(ABC, Cacheable):
             option=orjson.OPT_SORT_KEYS | orjson.OPT_SERIALIZE_DATACLASS,
         )
 
-    @functools.lru_cache()
+    @lru_cache()
     def get_use_args(self) -> set[str]:
         cache_args = set()
         for fn in self.get_dependable_fns():
             cache_args.update(fn.get_use_args())
         return cache_args
 
-    @functools.lru_cache()
+    @lru_cache()
     def get_dependable_fns(self) -> list[CacheableFn]:
         fns = []
         for obj in self.__dict__.values():
@@ -928,7 +926,7 @@ class CacheableFn(ABC, Cacheable):
         return fns
 
     @abstractmethod
-    def __call__(self, args):
+    def __call__(self, args) -> Any:
         """This is where to put the function body. To cache it, wraps it with @Cache.<X> decorators"""
         ...
 

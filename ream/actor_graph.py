@@ -1,11 +1,11 @@
 from __future__ import annotations
-from collections.abc import Mapping
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, is_dataclass
 from inspect import Parameter, signature
 from operator import attrgetter
 from pathlib import Path
-import re
 from typing import (
     Any,
     Callable,
@@ -15,21 +15,19 @@ from typing import (
     Sequence,
     Tuple,
     Type,
-    Union,
     TypeVar,
+    Union,
     get_type_hints,
 )
-from ream.actors.interface import Actor
 
 import yada
 from graph.interface import BaseEdge, BaseNode
 from graph.retworkx.digraph import RetworkXDiGraph
 from loguru import logger
-
 from ream.actors.base import BaseActor
+from ream.actors.interface import Actor
 from ream.helper import _logger_formatter, get_classpath
 from ream.params_helper import DataClassInstance, NoParams
-
 
 ActorEdge = BaseEdge
 A = TypeVar("A")
@@ -211,6 +209,41 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
                     i += 1
 
         return g
+
+    def auto_add_actor(
+        self,
+        cls: Type[BaseActor],
+        strict: bool = False,
+        namespace: Optional[str] = None,
+        auto_naming: bool = False,
+    ):
+        if namespace is None:
+            if auto_naming:
+                clsname = cls.__qualname__
+                if clsname.endswith("Actor"):
+                    clsname = clsname[: -len("Actor")]
+                namespace = re.sub(r"(?<!^)(?=[A-Z])", "_", clsname).lower()
+            else:
+                namespace = ""
+
+        target_actor_id = self.add_node(ActorNode.new(cls, namespace=namespace))
+        argtypes = get_type_hints(cls.__init__)
+        for i, name in enumerate(signature(cls.__init__).parameters.keys()):
+            if name not in argtypes:
+                if strict and i == 0 and name != "self":
+                    raise TypeError(
+                        f"Argument {name} of actor {cls} is not type hinted"
+                    )
+                continue
+            argtype = argtypes[name]
+            if issubclass(argtype, (BaseActor, Actor)):
+                source_actor_id = self.get_actor_by_classname(argtype).id
+                self.add_edge(
+                    ActorEdge(
+                        id=-1, source=source_actor_id, target=target_actor_id, key=i
+                    )
+                )
+                i += 1
 
     def create_actor(
         self,

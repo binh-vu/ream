@@ -1,12 +1,14 @@
 import atexit
 import cProfile
-from contextlib import contextmanager
 import functools
-from pathlib import Path
+import importlib
 import sys
-from typing import Type, TypeVar, Union, get_args, get_origin, Tuple
-from loguru import logger
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Tuple, Type, TypeVar, Union, get_args, get_origin
+
 import orjson
+from loguru import logger
 
 TYPE_ALIASES = {"typing.List": "list", "typing.Dict": "dict", "typing.Set": "set"}
 
@@ -30,6 +32,13 @@ def get_classpath(type: Type) -> str:
         raise NotImplementedError(type)
 
     return path
+
+
+def import_attr(attr_ident: str):
+    lst = attr_ident.rsplit(".", 1)
+    module, cls = lst
+    module = importlib.import_module(module)
+    return getattr(module, cls)
 
 
 def configure_loguru():
@@ -98,7 +107,7 @@ def resolve_type_arguments(
             return supplied_args
     param_set = set()
     param_list = []
-    for (i, each_base) in enumerate(target_origin.__orig_bases__):
+    for i, each_base in enumerate(target_origin.__orig_bases__):
         each_origin = get_origin(each_base)
         if each_origin is not None:
             # each base is of the form class[T], which is a private type _GenericAlias, but it is formally documented to have __parameters__

@@ -32,11 +32,11 @@ from nptyping import NDArray, Shape
 from nptyping.ndarray import NDArrayMeta  # type: ignore
 from nptyping.shape_expression import get_dimensions  # type: ignore
 from nptyping.typing_ import Number
-from ream.helper import get_classpath, has_dict_with_nonstr_keys
 from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath, get_open_fn
-from sm.misc.funcs import import_attr
 from tqdm import tqdm
 from typing_extensions import Self
+
+from ream.helper import get_classpath, has_dict_with_nonstr_keys, import_attr
 
 T = TypeVar("T")
 

@@ -28,14 +28,15 @@ from typing import (
 
 import orjson
 import serde.prelude as serde
-from hugedict.misc import Chain2, identity
-from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from loguru import logger
-from ream.fs import FS
-from ream.helper import orjson_dumps
 from serde.helper import AVAILABLE_COMPRESSIONS, JsonSerde
 from timer import Timer
 from typing_extensions import Self
+
+from hugedict.misc import Chain2, identity
+from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
+from ream.fs import FS
+from ream.helper import orjson_dumps
 
 try:
     import lz4.frame as lz4_frame  # type: ignore
@@ -912,7 +913,7 @@ class CacheableFn(ABC, Cacheable):
 
     @lru_cache()
     def get_use_args(self) -> set[str]:
-        cache_args = set()
+        cache_args = set(self.use_args)
         for fn in self.get_dependable_fns():
             cache_args.update(fn.get_use_args())
         return cache_args

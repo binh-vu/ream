@@ -1,9 +1,11 @@
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from ream.actors.base import BaseActor, P
-from typing import Generator, Optional, Generic
-from ream.dataset_helper import DatasetList, E
 from contextlib import contextmanager
+from typing import Generator, Generic, Optional
+
+from ream.actors.base import BaseActor, P
+from ream.dataset_helper import DatasetList, E
 
 
 class IDDSActor(ABC, Generic[E, P], BaseActor[P]):
@@ -13,7 +15,7 @@ class IDDSActor(ABC, Generic[E, P], BaseActor[P]):
         super().__init__(params, dep_actor)
         self.store = {}
 
-    def exec(self, dsquery: str) -> DatasetList[E]:
+    def __call__(self, dsquery: str) -> DatasetList[E]:
         if dsquery in self.store:
             return DatasetList(dsquery, [self.store[dsquery]])
         return self.load_dataset(dsquery)

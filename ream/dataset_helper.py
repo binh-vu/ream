@@ -1,28 +1,24 @@
 from __future__ import annotations
+
+import functools
 import random
-import re, functools, orjson
-from typing_extensions import TypeGuard
-from typing import (
-    Iterator,
-    TypedDict,
-    Dict,
-    Optional,
-    Tuple,
-    List,
-    Callable,
-    TypeVar,
-)
-from loguru import logger
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
-import serde.pickle
+from typing import Callable, Dict, Iterator, List, Optional, Tuple, TypedDict, TypeVar
+
+import orjson
 import serde.json
+import serde.pickle
+from loguru import logger
+from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
+from typing_extensions import TypeGuard
 
 RawSlice = TypedDict(
     "Slice", value=float, is_percentage=bool, absolute_value=Optional[int]
 )
 E = TypeVar("E")
+E_co = TypeVar("E_co", covariant=True)
 E2 = TypeVar("E2")
 
 

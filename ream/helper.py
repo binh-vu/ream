@@ -229,3 +229,13 @@ class ContextContainer:
             return getattr(self.container, attr)
         else:
             raise RuntimeError("ContextContainer is not usable")
+
+    def __deepcopy__(self, memo):
+        result = ContextContainer()
+        memo[id(self)] = result
+        # currently implementation only support deepcopy of empty container
+        assert len(self.container.__dict__) == 0
+        assert self.__dict__["_enable"] == False
+        # for k, v in self.__dict__.items():
+        #     setattr(result, k, deepcopy(v, memo))
+        return result

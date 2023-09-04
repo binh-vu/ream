@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pickle
+from copy import deepcopy
 from dataclasses import dataclass
 from inspect import Parameter
 from pathlib import Path
@@ -16,7 +17,10 @@ from ream.cache_helper import (
     CacheArgsHelper,
     DirBackend,
     FileBackend,
+    MemBackend,
+    ReplicatedBackends,
     SqliteBackend,
+    wrap_backend,
 )
 from ream.fs import FS
 from ream.prelude import BaseActor, NoParams
@@ -161,10 +165,6 @@ class TestCacheHelper:
         value: int
 
     def make_cache_fn(self, backend: Backend, **kwargs):
-        # special hack to overcome postinit limitation
-        if hasattr(backend, "_is_postinited"):
-            delattr(backend, "_is_postinited")
-
         class MyCacheFn(Cacheable):
             def __init__(self, workdir: FS | Path, disable: bool = False):
                 super().__init__(workdir, disable)
@@ -180,9 +180,6 @@ class TestCacheHelper:
         return MyCacheFn
 
     def make_complex_cache_fn(self, backend: Backend, **kwargs):
-        if hasattr(backend, "_is_postinited"):
-            delattr(backend, "_is_postinited")
-
         class MyCacheFn(Cacheable):
             def __init__(self, workdir: FS | Path, disable: bool = False):
                 super().__init__(workdir, disable)
@@ -198,9 +195,6 @@ class TestCacheHelper:
         return MyCacheFn
 
     def make_flat_cache_fn(self, backend: Backend, **kwargs):
-        if hasattr(backend, "_is_postinited"):
-            delattr(backend, "_is_postinited")
-
         class MyCacheFn(Cacheable):
             def __init__(self, workdir: FS | Path, disable: bool = False):
                 super().__init__(workdir, disable)
@@ -216,9 +210,6 @@ class TestCacheHelper:
         return MyCacheFn
 
     def make_complex_flat_cache_fn(self, backend: Backend, **kwargs):
-        if hasattr(backend, "_is_postinited"):
-            delattr(backend, "_is_postinited")
-
         class MyCacheFn(Cacheable):
             def __init__(self, workdir: FS | Path, disable: bool = False):
                 super().__init__(workdir, disable)
@@ -237,7 +228,7 @@ class TestCacheHelper:
     def compression(self, request):
         return request.param
 
-    @pytest.fixture(params=["file", "dir", "sqlite"])
+    @pytest.fixture(params=["file", "dir", "sqlite", "mem", "replica", "wrapped"])
     def backend(self, request, compression) -> Backend:
         if request.param == "file":
             return FileBackend(
@@ -267,7 +258,31 @@ class TestCacheHelper:
                 deser=pickle.loads,
                 compression=compression,
             )
-
+        if request.param == "mem":
+            return MemBackend()
+        if request.param == "replica":
+            return ReplicatedBackends(
+                [
+                    FileBackend(
+                        ser=pickle.dumps,
+                        deser=pickle.loads,
+                        fileext="pkl",
+                        compression=compression,
+                    ),
+                    MemBackend(),
+                ]
+            )
+        if request.param == "wrapped":
+            return wrap_backend(
+                FileBackend(
+                    ser=pickle.dumps,
+                    deser=pickle.loads,
+                    fileext="pkl",
+                    compression=compression,
+                ),
+                True,
+                True,
+            )
         raise NotImplementedError(request.param)
 
     def test_cache(self, tmp_path: Path, backend: Backend):
@@ -289,7 +304,7 @@ class TestCacheHelper:
     def test_cache_args(self, tmp_path: Path, backend: Backend):
         # if we specify no argument will be used during caching
         # calling with different arguments will always return the same result
-        fn = self.make_cache_fn(backend, cache_args=[])(tmp_path)
+        fn = self.make_cache_fn(deepcopy(backend), cache_args=[])(tmp_path)
         assert fn(10) == 100
         assert fn(4) == 100
 
@@ -300,7 +315,7 @@ class TestCacheHelper:
             CacheArgsHelper.gen_cache_self_args("coefficient"),
         ]:
             fn = self.make_cache_fn(
-                backend,
+                deepcopy(backend),
                 cache_self_args=cache_self_args,
             )(tmp_path)
             assert fn(5) == 25
@@ -312,17 +327,17 @@ class TestCacheHelper:
         # complex type will raise error
         with pytest.raises(TypeError):
             fn = self.make_complex_cache_fn(
-                backend,
+                deepcopy(backend),
             )(tmp_path)
 
         fn = self.make_complex_cache_fn(
-            backend,
+            deepcopy(backend),
             cache_key=lambda self, val: val.value.to_bytes(),
         )(tmp_path)
         assert fn(self.Integer(15)) == 225
 
         fn = self.make_complex_cache_fn(
-            backend,
+            deepcopy(backend),
             cache_ser_args={"val": lambda val: val.value},
         )(tmp_path)
         assert fn(self.Integer(25)) == 625
@@ -341,7 +356,7 @@ class TestCacheHelper:
     def test_flat_cache_args(self, tmp_path: Path, backend: Backend):
         # if we specify no argument will be used during caching
         # calling with different arguments will always return the same result
-        fn = self.make_flat_cache_fn(backend, cache_args=[])(tmp_path)
+        fn = self.make_flat_cache_fn(deepcopy(backend), cache_args=[])(tmp_path)
         assert fn([2, 4]) == [4, 4]
         assert fn([3, 5]) == [4, 4]
 
@@ -352,7 +367,7 @@ class TestCacheHelper:
             CacheArgsHelper.gen_cache_self_args("coefficient"),
         ]:
             fn = self.make_flat_cache_fn(
-                backend,
+                deepcopy(backend),
                 cache_self_args=cache_self_args,
             )(tmp_path)
             assert fn([7, 9]) == [49, 81]
@@ -364,18 +379,18 @@ class TestCacheHelper:
         # complex type will raise error
         with pytest.raises(TypeError):
             fn = self.make_complex_flat_cache_fn(
-                backend,
+                deepcopy(backend),
             )(tmp_path)
 
         fn = self.make_complex_flat_cache_fn(
-            backend,
+            deepcopy(backend),
             cache_key=lambda self, vals: vals.value.to_bytes(),
         )(tmp_path)
         assert fn([self.Integer(11), self.Integer(13)]) == [121, 169]
         assert fn(vals=[self.Integer(15), self.Integer(17)]) == [15**2, 17**2]
 
         fn = self.make_complex_flat_cache_fn(
-            backend,
+            deepcopy(backend),
             cache_ser_args={"vals": lambda val: val.value},
         )(tmp_path)
         assert fn([self.Integer(21), self.Integer(23)]) == [441, 529]
@@ -383,7 +398,7 @@ class TestCacheHelper:
 
     def test_cache_disable(self, tmp_path: Path, backend: Backend):
         for disable in ["disable", True]:
-            fn = self.make_cache_fn(backend, disable=disable)(tmp_path, True)
+            fn = self.make_cache_fn(deepcopy(backend), disable=disable)(tmp_path, True)
 
             # disable cache should always return the result
             assert fn(10) == 100
@@ -391,20 +406,22 @@ class TestCacheHelper:
             assert fn(10) == 200
 
         # disable attribute should only has lower priority
-        fn = self.make_cache_fn(backend, disable=False)(tmp_path, True)
+        fn = self.make_cache_fn(deepcopy(backend), disable=False)(tmp_path, True)
         assert fn(10) == 100
         fn.coefficient = 2
         assert fn(10) == 100
 
     def test_flat_cache_disable(self, tmp_path: Path, backend: Backend):
         for disable in ["disable", True]:
-            fn = self.make_flat_cache_fn(backend, disable=disable)(tmp_path, True)
+            fn = self.make_flat_cache_fn(deepcopy(backend), disable=disable)(
+                tmp_path, True
+            )
 
             assert fn([10, 5, 2]) == [100, 25, 4]
             fn.coefficient = 2
             assert fn([10, 5, 2]) == [200, 50, 8]
 
-        fn = self.make_flat_cache_fn(backend, disable=False)(tmp_path, True)
+        fn = self.make_flat_cache_fn(deepcopy(backend), disable=False)(tmp_path, True)
         assert fn([10, 5, 2]) == [100, 25, 4]
         fn.coefficient = 2
         assert fn([10, 5, 2]) == [100, 25, 4]

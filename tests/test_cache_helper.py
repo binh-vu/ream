@@ -7,10 +7,20 @@ from pathlib import Path
 from typing import List, Optional
 
 import pytest
+import serde.pickle
 
-from ream.cache_helper import Backend, Cache, Cacheable, CacheArgsHelper, FileBackend
+from ream.cache_helper import (
+    Backend,
+    Cache,
+    Cacheable,
+    CacheArgsHelper,
+    DirBackend,
+    FileBackend,
+    SqliteBackend,
+)
 from ream.fs import FS
 from ream.prelude import BaseActor, NoParams
+from tests.test_helper import has_lz4
 
 
 class CandidateGeneration(BaseActor[NoParams]):
@@ -151,6 +161,10 @@ class TestCacheHelper:
         value: int
 
     def make_cache_fn(self, backend: Backend, **kwargs):
+        # special hack to overcome postinit limitation
+        if hasattr(backend, "_is_postinited"):
+            delattr(backend, "_is_postinited")
+
         class MyCacheFn(Cacheable):
             def __init__(self, workdir: FS | Path, disable: bool = False):
                 super().__init__(workdir, disable)
@@ -166,6 +180,9 @@ class TestCacheHelper:
         return MyCacheFn
 
     def make_complex_cache_fn(self, backend: Backend, **kwargs):
+        if hasattr(backend, "_is_postinited"):
+            delattr(backend, "_is_postinited")
+
         class MyCacheFn(Cacheable):
             def __init__(self, workdir: FS | Path, disable: bool = False):
                 super().__init__(workdir, disable)
@@ -181,6 +198,9 @@ class TestCacheHelper:
         return MyCacheFn
 
     def make_flat_cache_fn(self, backend: Backend, **kwargs):
+        if hasattr(backend, "_is_postinited"):
+            delattr(backend, "_is_postinited")
+
         class MyCacheFn(Cacheable):
             def __init__(self, workdir: FS | Path, disable: bool = False):
                 super().__init__(workdir, disable)
@@ -190,12 +210,15 @@ class TestCacheHelper:
                 backend=backend,
                 **kwargs,
             )
-            def __call__(self, val: list[int]) -> list[int]:
-                return [(v**2) * self.coefficient for v in val]
+            def __call__(self, vals: list[int]) -> list[int]:
+                return [(v**2) * self.coefficient for v in vals]
 
         return MyCacheFn
 
     def make_complex_flat_cache_fn(self, backend: Backend, **kwargs):
+        if hasattr(backend, "_is_postinited"):
+            delattr(backend, "_is_postinited")
+
         class MyCacheFn(Cacheable):
             def __init__(self, workdir: FS | Path, disable: bool = False):
                 super().__init__(workdir, disable)
@@ -205,22 +228,43 @@ class TestCacheHelper:
                 backend=backend,
                 **kwargs,
             )
-            def __call__(self, val: list[TestCacheHelper.Integer]) -> list[int]:
-                return [(v.value**2) * self.coefficient for v in val]
+            def __call__(self, vals: list[TestCacheHelper.Integer]) -> list[int]:
+                return [(v.value**2) * self.coefficient for v in vals]
 
         return MyCacheFn
 
-    @pytest.fixture(params=[None, "gz"])
+    @pytest.fixture(params=[None, "gz", "bz2"] + (["lz4"] if has_lz4() else []))
     def compression(self, request):
         return request.param
 
-    @pytest.fixture(params=["file", "dir", "sqlite"][:1])
+    @pytest.fixture(params=["file", "dir", "sqlite"])
     def backend(self, request, compression) -> Backend:
         if request.param == "file":
             return FileBackend(
                 ser=pickle.dumps,
                 deser=pickle.loads,
                 fileext="pkl",
+                compression=compression,
+            )
+        if request.param == "dir":
+            return DirBackend(
+                ser=lambda value, path, compression: serde.pickle.ser(
+                    value,
+                    path / f"data.pkl.{compression}"
+                    if compression is not None
+                    else path / "data.pkl",
+                ),
+                deser=lambda path, compression: serde.pickle.deser(
+                    path / f"data.pkl.{compression}"
+                    if compression is not None
+                    else path / "data.pkl",
+                ),
+                compression=compression,
+            )
+        if request.param == "sqlite":
+            return SqliteBackend(
+                ser=pickle.dumps,
+                deser=pickle.loads,
                 compression=compression,
             )
 
@@ -325,15 +369,17 @@ class TestCacheHelper:
 
         fn = self.make_complex_flat_cache_fn(
             backend,
-            cache_key=lambda self, val: val.value.to_bytes(),
+            cache_key=lambda self, vals: vals.value.to_bytes(),
         )(tmp_path)
         assert fn([self.Integer(11), self.Integer(13)]) == [121, 169]
+        assert fn(vals=[self.Integer(15), self.Integer(17)]) == [15**2, 17**2]
 
         fn = self.make_complex_flat_cache_fn(
             backend,
-            cache_ser_args={"val": lambda val: val.value},
+            cache_ser_args={"vals": lambda val: val.value},
         )(tmp_path)
         assert fn([self.Integer(21), self.Integer(23)]) == [441, 529]
+        assert fn(vals=[self.Integer(25), self.Integer(27)]) == [25**2, 27**2]
 
     def test_cache_disable(self, tmp_path: Path, backend: Backend):
         for disable in ["disable", True]:

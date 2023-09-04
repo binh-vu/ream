@@ -1130,16 +1130,18 @@ class Backend(ABC):
         self,
         ser: Callable[[Any], bytes],
         deser: Callable[[bytes], Any],
-        compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
+        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
     ):
         if compression == "gz":
             origin_ser = ser
+            origin_deser = deser
             ser = lambda x: gzip.compress(origin_ser(x), mtime=0)
-            deser = lambda x: deser(gzip.decompress(x))
+            deser = lambda x: origin_deser(gzip.decompress(x))
         elif compression == "bz2":
             origin_ser = ser
-            ser = lambda x: bz2.compress(ser(x))
-            deser = lambda x: deser(bz2.decompress(x))
+            origin_deser = deser
+            ser = lambda x: bz2.compress(origin_ser(x))
+            deser = lambda x: origin_deser(bz2.decompress(x))
         elif compression == "lz4":
             if lz4_frame is None:
                 raise ValueError("lz4 is not installed")
@@ -1147,11 +1149,15 @@ class Backend(ABC):
             ser = Chain2(lz4_frame.compress, ser)
             deser = Chain2(deser, lz4_frame.decompress)
 
+        self.compression = compression
         self.ser = ser
         self.deser = deser
 
     def postinit(self, func: Callable):
-        pass
+        if not hasattr(self, "_is_postinited"):
+            self._is_postinited = True
+        else:
+            raise RuntimeError("Backend can only be postinited once")
 
     @contextmanager
     def context(self, obj: HasWorkingFsTrait, *args, **kwargs):
@@ -1185,6 +1191,7 @@ class FileBackend(Backend):
         self.container = ContextContainer()
 
     def postinit(self, func: Callable):
+        super().postinit(func)
         if self.filename is None:
             self.filename = func.__name__
             if self.fileext is not None:
@@ -1250,11 +1257,106 @@ class FileBackend(Backend):
 
 
 class DirBackend(Backend):
-    pass
+    def __init__(
+        self,
+        ser: Callable[[Any, Path, Optional[AVAILABLE_COMPRESSIONS]], None],
+        deser: Callable[[Path, Optional[AVAILABLE_COMPRESSIONS]], Any],
+        dirname: Optional[str | Callable[..., str]] = None,
+        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+    ):
+        self.dirname = dirname
+        self.ser = ser
+        self.deser = deser
+        self.compression: Optional[AVAILABLE_COMPRESSIONS] = compression
+        self.container = ContextContainer()
+
+    def postinit(self, func: Callable):
+        super().postinit(func)
+        if self.dirname is None:
+            self.dirname = func.__name__
+
+        if isinstance(self.dirname, str):
+            assert (
+                self.dirname.find(".") == -1
+            ), "Must not have file extension to be considered as a directory"
+
+    @contextmanager
+    def context(self, obj: HasWorkingFsTrait, *args, **kwargs):
+        if isinstance(self.dirname, str):
+            dirname = self.dirname
+        else:
+            assert self.dirname is not None
+            dirname = self.dirname(args[0], *args[1], **args[2])
+            assert (
+                dirname.find(".") == -1
+            ), "Must not have file extension to be considered as a directory"
+
+        try:
+            self.container.enable()
+            self.container.dirname = dirname
+            self.container.fs = obj.get_working_fs()
+            self.container.cache_dir = None
+            yield self.container
+        finally:
+            self.container.disable()
+
+    def has_key(self, key: bytes):
+        if self.container.cache_dir is None:
+            self.container.cache_dir = self.container.fs.get(
+                self.container.dirname, key=key, save_key=True
+            )
+            self.container.key = key
+        return self.container.cache_dir.exists()
+
+    def get(self, key: bytes):
+        if self.container.cache_dir is None:
+            self.container.cache_dir = self.container.fs.get(
+                self.container.dirname, key=key, save_key=True
+            )
+            self.container.key = key
+        else:
+            assert self.container.key == key
+        dpath = self.container.cache_dir.get()
+        return self.deser(dpath, self.compression)
+
+    def set(self, key: bytes, value: Any):
+        if self.container.cache_dir is None:
+            self.container.cache_dir = self.container.fs.get(
+                self.container.dirname, key=key, save_key=True
+            )
+            self.container.key = key
+        else:
+            assert self.container.key == key
+        with self.container.fs.acquire_write_lock(), self.container.cache_dir.reserve_and_track() as dpath:
+            return self.ser(value, dpath, self.compression)
 
 
 class SqliteBackend(Backend):
-    pass
+    def postinit(self, func: Callable):
+        super().postinit(func)
+        self.dbname = f"{func.__name__}.sqlite"
+        self.dbconn: SqliteDict = None  # type: ignore
+
+    @contextmanager
+    def context(self, obj: HasWorkingFsTrait, *args, **kwargs):
+        if self.dbconn is None:
+            self.dbconn = SqliteDict(
+                obj.get_working_fs().root / self.dbname,
+                keytype=SqliteDictFieldType.bytes,
+                ser_value=identity,
+                deser_value=identity,
+            )
+
+        yield None
+
+    def has_key(self, key: bytes) -> bool:
+        return key in self.dbconn
+
+    def get(self, key: bytes) -> Any:
+        return self.deser(self.dbconn[key])
+
+    def set(self, key: bytes, value: Any) -> None:
+        self.dbconn[key] = self.ser(value)
 
 
 class HasWorkingFsTrait(Protocol):

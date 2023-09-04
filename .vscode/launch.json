@@ -18,9 +18,7 @@
                 "-sxvv",
                 "tests",
                 "-k",
-                "TestCacheHelper",
-                "-k",
-                "test_cache"
+                "TestCacheArgsHelper",
             ]
         }
     ]

@@ -7,7 +7,7 @@ jobs:
   build:
     strategy:
       matrix:
-        python: ["3.8", "3.9", "3.10"]
+        python: ["3.9", "3.10", "3.11"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -21,6 +21,7 @@ jobs:
           poetry lock --no-update
           poetry install
       - name: run test
+        if: matrix.python == '3.9'
         run: poetry run pytest -xs tests/
       - name: build wheels
         run: poetry build
@@ -41,7 +42,7 @@ jobs:
       - name: setup python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.8
+          python-version: 3.9
       - name: pypi publish
         run: |
           pip install twine

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import bz2
-import contextlib
 import gzip
 import pickle
 from abc import ABC, abstractmethod
@@ -55,7 +54,7 @@ except ImportError:
 NoneType = type(None)
 # arguments are (self, *args, **kwargs)
 CacheKeyFn = Callable[..., bytes]
-ArgSer = Callable[[Any], Optional[str | int | bool]]
+ArgSer = Callable[[Any], Optional[Union[str, int, bool]]]
 
 T = TypeVar("T")
 F = TypeVar("F")

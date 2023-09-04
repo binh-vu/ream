@@ -332,7 +332,7 @@ class TestCacheHelper:
 
         fn = self.make_complex_cache_fn(
             deepcopy(backend),
-            cache_key=lambda self, val: val.value.to_bytes(),
+            cache_key=lambda self, val: val.value.to_bytes(4, "little"),
         )(tmp_path)
         assert fn(self.Integer(15)) == 225
 
@@ -384,7 +384,7 @@ class TestCacheHelper:
 
         fn = self.make_complex_flat_cache_fn(
             deepcopy(backend),
-            cache_key=lambda self, vals: vals.value.to_bytes(),
+            cache_key=lambda self, vals: vals.value.to_bytes(4, "little"),
         )(tmp_path)
         assert fn([self.Integer(11), self.Integer(13)]) == [121, 169]
         assert fn(vals=[self.Integer(15), self.Integer(17)]) == [15**2, 17**2]

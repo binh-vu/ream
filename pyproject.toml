@@ -10,7 +10,7 @@ repository = "https://github.com/binh-vu/ream"
 packages = [{ include = "ream" }]
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.9"
 t2-yada = "^1.2.0"
 timer4 = ">= 1.0.4, < 2.0.0"
 loguru = "^0.6.0"

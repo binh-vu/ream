@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bz2
+import contextlib
 import gzip
 import pickle
 from abc import ABC, abstractmethod
@@ -13,6 +14,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    Generic,
     Iterable,
     Literal,
     Optional,
@@ -29,14 +31,14 @@ from typing import (
 import orjson
 import serde.prelude as serde
 from loguru import logger
-from serde.helper import AVAILABLE_COMPRESSIONS, JsonSerde
+from serde.helper import AVAILABLE_COMPRESSIONS, JsonSerde, get_open_fn
 from timer import Timer
 from typing_extensions import Self
 
 from hugedict.misc import Chain2, identity
 from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from ream.fs import FS
-from ream.helper import orjson_dumps
+from ream.helper import ContextContainer, orjson_dumps
 
 try:
     import lz4.frame as lz4_frame  # type: ignore
@@ -46,8 +48,12 @@ except ImportError:
 NoneType = type(None)
 # arguments are (self, *args, **kwargs)
 CacheKeyFn = Callable[..., bytes]
+ArgSer = Callable[[Any], Optional[str | int | bool]]
 
+T = TypeVar("T")
 F = TypeVar("F")
+ARGS = Any
+
 
 if TYPE_CHECKING:
     from loguru import Logger
@@ -319,7 +325,7 @@ class Cache:
 
         def wrapper_fn(func):
             func_name = func.__name__
-            cache_args_helper = CacheArgsHelper(func)
+            cache_args_helper = CacheArgsHelper.from_actor_func(func)
             if cache_args is not None:
                 cache_args_helper.keep_args(cache_args)
             if cache_self_args is not None:
@@ -413,12 +419,9 @@ class Cache:
                 if isinstance(filename2, str) and compression is not None:
                     assert filename2.endswith(compression)
 
-            cache_args_helper = CacheArgsHelper(func)
+            cache_args_helper = CacheArgsHelper.from_actor_func(func, cache_self_args)
             if cache_args is not None:
                 cache_args_helper.keep_args(cache_args)
-
-            if cache_self_args is not None:
-                cache_args_helper.set_self_args(cache_self_args)
 
             keyfn = cache_key
             if keyfn is None:
@@ -532,7 +535,7 @@ class Cache:
             else:
                 dirname2 = dirname
 
-            cache_args_helper = CacheArgsHelper(func)
+            cache_args_helper = CacheArgsHelper.from_actor_func(func)
             if cache_args is not None:
                 cache_args_helper.keep_args(cache_args)
 
@@ -652,12 +655,9 @@ class Cache:
             deser = Chain2(deser, lz4_frame.decompress)
 
         def wrapper_fn(func):
-            cache_args_helper = CacheArgsHelper(func)
+            cache_args_helper = CacheArgsHelper.from_actor_func(func, cache_self_args)
             if cache_args is not None:
                 cache_args_helper.keep_args(cache_args)
-
-            if cache_self_args is not None:
-                cache_args_helper.set_self_args(cache_self_args)
 
             keyfn = cache_key
             if keyfn is None:
@@ -735,6 +735,227 @@ class Cache:
 
         return wrapper_fn  # type: ignore
 
+    @staticmethod
+    def cache(
+        backend: Backend,
+        cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
+        mem_persist: bool = False,
+        cache_attr: str = "_cache",
+        disable: bool | str | Callable[[Any], bool] = False,
+    ):
+        if isinstance(disable, bool) and disable:
+            return identity
+
+        def wrapper_fn(func):
+            cache_args_helper = CacheArgsHelper.from_actor_func(func, cache_self_args)
+            if cache_args is not None:
+                cache_args_helper.keep_args(cache_args)
+
+            keyfn = cache_key
+            if keyfn is None:
+                cache_args_helper.ensure_auto_cache_key_friendly()
+                keyfn = lambda self, *args, **kwargs: orjson_dumps(
+                    cache_args_helper.get_args(self, *args, **kwargs)
+                )
+
+            backend.postinit(func)
+
+            @wraps(func)
+            def fn(self, *args, **kwargs):
+                if not isinstance(disable, bool):
+                    is_disable = (
+                        getattr(self, disable)
+                        if isinstance(disable, str)
+                        else disable(self)
+                    )
+                    if is_disable:
+                        return func(self, *args, **kwargs)
+
+                with backend.context(self, *args, **kwargs):
+                    key = keyfn(self, *args, **kwargs)
+                    if backend.has_key(key):
+                        return backend.get(key)
+                    else:
+                        output = func(self, *args, **kwargs)
+                        backend.set(key, output)
+                        return output
+
+            if mem_persist:
+                return Cache.mem(
+                    cache_args=cache_args,
+                    cache_self_args=cache_self_args,
+                    cache_key=cache_key,
+                    cache_attr=cache_attr,
+                )(fn)
+            return fn
+
+        return wrapper_fn
+
+    @staticmethod
+    def flat_cache(
+        backend: Backend,
+        cache_args: Optional[list[str]] = None,
+        cache_self_args: Optional[Callable[..., dict]] = None,
+        cache_ser_args: Optional[dict[str, ArgSer]] = None,
+        flat_output: Optional[Callable[..., list]] = None,
+        unflat_output: Optional[Callable[..., Any]] = None,
+        mem_persist: bool = False,
+        cache_attr: str = "_cache",
+        disable: bool | str | Callable[[Any], bool] = False,
+    ) -> Callable[[F], F]:
+        if isinstance(disable, bool) and disable:
+            return identity
+
+        def wrapper_fn(func):
+            cache_args_helper = CacheArgsHelper.from_actor_func(
+                func, cache_self_args, cache_ser_args
+            )
+            if cache_args is not None:
+                cache_args_helper.keep_args(cache_args)
+
+            # since we flatten the input & output, we check the args to make sure we have only one
+            # arg of type of sequence.
+            seq_arg_name = None
+            seq_arg_index = 0
+            for i, (name, argtype) in enumerate(cache_args_helper.argtypes.items()):
+                if argtype is not None and issubclass(get_origin(argtype), Sequence):
+                    assert seq_arg_name is None
+                    assert (
+                        len(get_args(argtype)) == 1
+                    )  # this is likely redundant because the annotation is usually Sequence[T]
+                    seq_arg_name = name
+                    seq_arg_index = i
+            assert seq_arg_name is not None
+
+            # now we have only one sequence arg, we go ahead and change it to its item type
+            cache_args_helper.argtypes[seq_arg_name] = get_args(
+                cache_args_helper.argtypes[seq_arg_name]
+            )[0]
+
+            # ensure that we can generate a cache key function
+            cache_args_helper.ensure_auto_cache_key_friendly()
+            keyfn = lambda self, *args, **kwargs: orjson_dumps(
+                cache_args_helper.get_args(self, *args, **kwargs)
+            )
+
+            # now let generate flatten functions for input & output
+            def flat_inargs(self, *args, **kwargs):
+                lst_args = []
+                if len(args) > seq_arg_index:
+                    # seq arg is in the positional args
+                    for seq_val in args[seq_arg_index]:
+                        lst_args.append(
+                            (
+                                args[:seq_arg_index]
+                                + (seq_val,)
+                                + args[seq_arg_index + 1 :],
+                                kwargs,
+                            )
+                        )
+                    return lst_args
+
+                # seq arg is in the keyword args
+                for seq_val in kwargs[seq_arg_name]:
+                    new_kwargs = kwargs.copy()
+                    new_kwargs[seq_arg_name] = seq_val
+                    lst_args.append((args, new_kwargs))
+                return lst_args
+
+            def unflat_inargs(
+                self, lst_args: list[tuple[tuple | list, dict]]
+            ) -> tuple[tuple | list, dict]:
+                assert len(lst_args) > 0
+
+                args, kwargs = lst_args[0]
+                if len(args) > seq_arg_index:
+                    # seq arg is in the positional args
+                    args = list(args)
+                    args[seq_arg_index] = [pa[seq_arg_index] for pa, _ in lst_args]
+                    return args, kwargs
+
+                # seq arg is in the keyword args
+                kwargs = kwargs.copy()
+                kwargs[seq_arg_name] = [pka[seq_arg_name] for _, pka in lst_args]
+                return args, kwargs
+
+            if flat_output is None:
+
+                def default_flat_output(self, output: list, *inargs, **inkwargs):
+                    return output
+
+                flat_output_fn = default_flat_output
+            else:
+                flat_output_fn = flat_output
+
+            if unflat_output is None:
+
+                def default_unflat_output(self, flatten_output, *args, **kwargs):
+                    return flatten_output
+
+                unflat_output_fn = default_unflat_output
+            else:
+                unflat_output_fn = unflat_output
+
+            backend.postinit(func)
+
+            @wraps(func)
+            def fn(self: HasWorkingFsTrait, *args, **kwargs):
+                if not isinstance(disable, bool):
+                    is_disable = (
+                        getattr(self, disable)
+                        if isinstance(disable, str)
+                        else disable(self)
+                    )
+                    if is_disable:
+                        return func(self, *args, **kwargs)
+
+                lst_inargs = flat_inargs(self, *args, **kwargs)
+                lst_inargs_keys = [
+                    keyfn(self, *in_args, **in_kwargs)
+                    for in_args, in_kwargs in lst_inargs
+                ]
+
+                finished_jobs = []
+                unfinished_jobs_index = []
+                unfinished_jobs = []
+                for i, (in_args, in_kwargs) in enumerate(lst_inargs):
+                    with backend.context(self, *in_args, **in_kwargs):
+                        key = lst_inargs_keys[i]
+                        if backend.has_key(key):
+                            finished_jobs.append(backend.get(key))
+                        else:
+                            unfinished_jobs.append((in_args, in_kwargs))
+                            unfinished_jobs_index.append(i)
+                            finished_jobs.append(None)
+
+                if len(unfinished_jobs) > 0:
+                    # finish the remaining jobs
+                    subargs, subkwargs = unflat_inargs(self, unfinished_jobs)
+
+                    # call the function with unfinished_args
+                    output = func(self, *subargs, **subkwargs)
+
+                    # unroll the output and catch the unfinished args
+                    for i, out in zip(
+                        unfinished_jobs_index,
+                        flat_output_fn(self, output, unfinished_jobs),
+                    ):
+                        with backend.context(
+                            self, *unfinished_jobs[i][0], **unfinished_jobs[i][1]
+                        ):
+                            key = lst_inargs_keys[i]
+                            backend.set(key, out)
+                            finished_jobs[i] = out
+
+                # now we need to merge the result.
+                return unflat_output_fn(self, finished_jobs, *args, **kwargs)
+
+            return fn
+
+        return wrapper_fn  # type: ignore
+
 
 class CacheArgsHelper:
     """Helper to working with arguments of a function. This class ensures
@@ -742,10 +963,31 @@ class CacheArgsHelper:
     to always put the calling arguments in the same declared order.
     """
 
-    def __init__(self, func: Callable):
-        self.args: dict[str, Parameter] = {}
+    def __init__(
+        self,
+        args: dict[str, Parameter],
+        argtypes: dict[str, Optional[Type]],
+        self_args: Optional[Callable[..., dict]] = None,
+        cache_argser: Optional[dict[str, ArgSer]] = None,
+    ):
+        self.args = args
+        self.argtypes = argtypes
+        self.argnames: list[str] = list(self.args.keys())
+        self.cache_args = self.argnames
+        self.cache_argser: dict[str, ArgSer] = cache_argser or {}
+        self.cache_self_args = self_args or None
+
+    @staticmethod
+    def from_actor_func(
+        func: Callable,
+        self_args: Optional[Callable[..., dict]] = None,
+        cache_argser: Optional[dict[str, ArgSer]] = None,
+    ):
+        args: dict[str, Parameter] = {}
         try:
-            self.argtypes: dict[str, Optional[Type]] = get_type_hints(func)
+            argtypes: dict[str, Optional[Type]] = get_type_hints(func)
+            if "return" in argtypes:
+                argtypes.pop("return")
         except TypeError:
             logger.error(
                 "Cannot get type hints for function {}. "
@@ -757,23 +999,19 @@ class CacheArgsHelper:
             )
             raise
         for name, param in signature(func).parameters.items():
-            self.args[name] = param
-            if name not in self.argtypes:
-                self.argtypes[name] = None
+            args[name] = param
+            if name not in argtypes:
+                argtypes[name] = None
 
         assert (
-            next(iter(self.args)) == "self"
+            next(iter(args)) == "self"
         ), "The first argument of the method must be self, an instance of BaseActor"
-        self.args.pop("self")
-        self.argnames: list[str] = list(self.args.keys())
-        self.cache_args = self.argnames
-        self.cache_self_args = None
+        args.pop("self")
+
+        return CacheArgsHelper(args, argtypes, self_args, cache_argser)
 
     def keep_args(self, names: Iterable[str]) -> None:
         self.cache_args = list(names)
-
-    def set_self_args(self, self_args: Optional[Callable[..., dict]]) -> None:
-        self.cache_self_args = self_args
 
     def get_cache_argtypes(self) -> dict[str, Optional[Type]]:
         return {name: self.argtypes[name] for name in self.cache_args}
@@ -788,6 +1026,10 @@ class CacheArgsHelper:
                 raise TypeError(
                     f"Variable arguments are not supported for automatically generating caching key to cache function call. Found one with name: {name}"
                 )
+
+            if name in self.cache_argser:
+                # the users provide a function to serialize the argument manually, so we trust the user.
+                continue
 
             argtype = self.argtypes[name]
             if argtype is None:
@@ -840,6 +1082,9 @@ class CacheArgsHelper:
 
         if self.cache_self_args is not None:
             out.update(self.cache_self_args(obj))
+
+        for name, ser_fn in self.cache_argser.items():
+            out[name] = ser_fn(out[name])
         return out
 
     def get_args_as_tuple(self, obj: HasWorkingFsTrait, *args, **kwargs) -> tuple:
@@ -870,6 +1115,136 @@ class CacheArgsHelper:
         return get_self_args
 
 
+class Backend(ABC):
+    def __init__(
+        self,
+        ser: Callable[[Any], bytes],
+        deser: Callable[[bytes], Any],
+        compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
+    ):
+        if compression == "gz":
+            ser = lambda x: gzip.compress(ser(x), mtime=0)
+            deser = lambda x: deser(gzip.decompress(x))
+        elif compression == "bz2":
+            ser = lambda x: bz2.compress(ser(x))
+            deser = lambda x: deser(bz2.decompress(x))
+        elif compression == "lz4":
+            if lz4_frame is None:
+                raise ValueError("lz4 is not installed")
+            # using lambda somehow terminate the program without raising an error
+            ser = Chain2(lz4_frame.compress, ser)
+            deser = Chain2(deser, lz4_frame.decompress)
+
+        self.ser = ser
+        self.deser = deser
+
+    def postinit(self, func: Callable):
+        pass
+
+    @contextmanager
+    def context(self, obj: HasWorkingFsTrait, *args, **kwargs):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def has_key(self, key: bytes) -> bool:
+        ...
+
+    @abstractmethod
+    def get(self, key: bytes) -> Any:
+        ...
+
+    @abstractmethod
+    def set(self, key: bytes, value: Any) -> None:
+        ...
+
+
+class FileBackend(Backend):
+    def __init__(
+        self,
+        ser: Callable[[Any], bytes],
+        deser: Callable[[bytes], Any],
+        filename: Optional[str | Callable[..., str]] = None,
+        fileext: Optional[str] = None,
+        compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
+    ):
+        super().__init__(ser, deser, compression)
+        self.filename = filename
+        self.fileext = fileext
+        self.container = ContextContainer()
+
+    def postinit(self, func: Callable):
+        if self.filename is None:
+            self.filename = func.__name__
+            if self.fileext is not None:
+                assert not self.fileext.startswith(".")
+                self.filename += f".{self.fileext}"
+
+        if isinstance(self.filename, str):
+            assert (
+                self.filename.find(".") != -1
+            ), "Must have file extension to be considered as a file"
+
+    @contextmanager
+    def context(self, obj: HasWorkingFsTrait, *args, **kwargs):
+        if isinstance(self.filename, str):
+            filename = self.filename
+        else:
+            assert self.filename is not None
+            filename = self.filename(args[0], *args[1], **args[2])
+            assert (
+                filename.find(".") != -1
+            ), "Must have file extension to be considered as a file"
+
+        try:
+            self.container.enable()
+            self.container.filename = filename
+            self.container.fs = obj.get_working_fs()
+            self.container.cache_file = None
+            yield self.container
+        finally:
+            self.container.disable()
+
+    def has_key(self, key: bytes):
+        if self.container.cache_file is None:
+            self.container.cache_file = self.container.fs.get(
+                self.container.filename, key=key, save_key=True
+            )
+            self.container.key = key
+        return self.container.cache_file.exists()
+
+    def get(self, key: bytes):
+        if self.container.cache_file is None:
+            self.container.cache_file = self.container.fs.get(
+                self.container.filename, key=key, save_key=True
+            )
+            self.container.key = key
+        else:
+            assert self.container.key == key
+        fpath = self.container.cache_file.get()
+        with open(fpath, "rb") as f:
+            return self.deser(f.read())
+
+    def set(self, key: bytes, value: Any):
+        if self.container.cache_file is None:
+            self.container.cache_file = self.container.fs.get(
+                self.container.filename, key=key, save_key=True
+            )
+            self.container.key = key
+        else:
+            assert self.container.key == key
+        with self.container.fs.acquire_write_lock(), self.container.cache_file.reserve_and_track() as fpath:
+            with open(fpath, "wb") as f:
+                return f.write(self.ser(value))
+
+
+class DirBackend(Backend):
+    pass
+
+
+class SqliteBackend(Backend):
+    pass
+
+
 class HasWorkingFsTrait(Protocol):
     logger: Logger
 
@@ -895,7 +1270,7 @@ class Cacheable:
         return self.workdir
 
 
-class CacheableFn(ABC, Cacheable):
+class CacheableFn(Generic[T], ABC, Cacheable):
     """This utility provides a way to break a giantic function into smaller pieces that can be cached individually."""
 
     def __init__(
@@ -905,7 +1280,7 @@ class CacheableFn(ABC, Cacheable):
         self.use_args = use_args
 
     @staticmethod
-    def get_cache_key(slf: CacheableFn, args: F) -> bytes:
+    def get_cache_key(slf: CacheableFn, args: T) -> bytes:
         return orjson.dumps(
             {attr: getattr(args, attr) for attr in slf.get_use_args()},
             option=orjson.OPT_SORT_KEYS | orjson.OPT_SERIALIZE_DATACLASS,
@@ -927,7 +1302,7 @@ class CacheableFn(ABC, Cacheable):
         return fns
 
     @abstractmethod
-    def __call__(self, args) -> Any:
+    def __call__(self, args: T) -> Any:
         """This is where to put the function body. To cache it, wraps it with @Cache.<X> decorators"""
         ...
 

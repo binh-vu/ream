@@ -14,9 +14,13 @@ from loguru import logger
 from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
 from typing_extensions import TypeGuard
 
-RawSlice = TypedDict(
-    "Slice", value=float, is_percentage=bool, absolute_value=Optional[int]
-)
+
+class RawSlice(TypedDict):
+    value: float
+    is_percentage: bool
+    absolute_value: Optional[int]
+
+
 E = TypeVar("E")
 E_co = TypeVar("E_co", covariant=True)
 E2 = TypeVar("E2")

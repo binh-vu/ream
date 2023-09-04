@@ -3,6 +3,7 @@ import cProfile
 import functools
 import importlib
 import sys
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Tuple, Type, TypeVar, Union, get_args, get_origin
@@ -199,3 +200,32 @@ def profile_fn(
         return fn
 
     return wrapper_fn  # type: ignore
+
+
+class ContextContainer:
+    def __init__(self):
+        # self.container = threading.local()
+        # setattr(self, "container", threading.local())
+        self.__dict__["container"] = threading.local()
+        self.__dict__["_enable"] = False
+        # self._enable = False
+
+    def enable(self):
+        assert self._enable == False
+        self.__dict__["_enable"] = True
+
+    def disable(self):
+        assert self._enable == True
+        self.__dict__["_enable"] = False
+
+    def __setattr__(self, attr, value):
+        if self._enable:
+            setattr(self.container, attr, value)
+        else:
+            raise RuntimeError("ContextContainer is not usable")
+
+    def __getattr__(self, attr):
+        if self._enable:
+            return getattr(self.container, attr)
+        else:
+            raise RuntimeError("ContextContainer is not usable")

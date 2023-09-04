@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pickle
+from dataclasses import dataclass
 from inspect import Parameter
 from pathlib import Path
 from typing import List, Optional
@@ -145,6 +146,10 @@ class TestCacheArgsHelper:
 
 
 class TestCacheHelper:
+    @dataclass
+    class Integer:
+        value: int
+
     def make_cache_fn(self, backend: Backend, **kwargs):
         class MyCacheFn(Cacheable):
             def __init__(self, workdir: FS | Path, disable: bool = False):
@@ -157,6 +162,21 @@ class TestCacheHelper:
             )
             def __call__(self, val: int) -> int:
                 return (val**2) * self.coefficient
+
+        return MyCacheFn
+
+    def make_complex_cache_fn(self, backend: Backend, **kwargs):
+        class MyCacheFn(Cacheable):
+            def __init__(self, workdir: FS | Path, disable: bool = False):
+                super().__init__(workdir, disable)
+                self.coefficient = 1
+
+            @Cache.cache(
+                backend=backend,
+                **kwargs,
+            )
+            def __call__(self, val: TestCacheHelper.Integer) -> int:
+                return (val.value**2) * self.coefficient
 
         return MyCacheFn
 
@@ -175,13 +195,33 @@ class TestCacheHelper:
 
         return MyCacheFn
 
-    @pytest.fixture(scope="class", params=["file", "dir", "sqlite"][:1])
-    def backend(self, request) -> Backend:
+    def make_complex_flat_cache_fn(self, backend: Backend, **kwargs):
+        class MyCacheFn(Cacheable):
+            def __init__(self, workdir: FS | Path, disable: bool = False):
+                super().__init__(workdir, disable)
+                self.coefficient = 1
+
+            @Cache.flat_cache(
+                backend=backend,
+                **kwargs,
+            )
+            def __call__(self, val: list[TestCacheHelper.Integer]) -> list[int]:
+                return [(v.value**2) * self.coefficient for v in val]
+
+        return MyCacheFn
+
+    @pytest.fixture(params=[None, "gz"])
+    def compression(self, request):
+        return request.param
+
+    @pytest.fixture(params=["file", "dir", "sqlite"][:1])
+    def backend(self, request, compression) -> Backend:
         if request.param == "file":
             return FileBackend(
                 ser=pickle.dumps,
                 deser=pickle.loads,
                 fileext="pkl",
+                compression=compression,
             )
 
         raise NotImplementedError(request.param)
@@ -202,6 +242,47 @@ class TestCacheHelper:
         fn.coefficient = 1
         assert fn(2) == 8
 
+    def test_cache_args(self, tmp_path: Path, backend: Backend):
+        # if we specify no argument will be used during caching
+        # calling with different arguments will always return the same result
+        fn = self.make_cache_fn(backend, cache_args=[])(tmp_path)
+        assert fn(10) == 100
+        assert fn(4) == 100
+
+        # we also can specify the argument from self such as coefficient
+        # doing so, the result will be different when the coefficient change
+        for cache_self_args in [
+            "coefficient",
+            CacheArgsHelper.gen_cache_self_args("coefficient"),
+        ]:
+            fn = self.make_cache_fn(
+                backend,
+                cache_self_args=cache_self_args,
+            )(tmp_path)
+            assert fn(5) == 25
+            fn.coefficient = 2
+            assert fn(5) == 50
+
+        # we can customize how to serialize each argument to
+        # make it friendly with cache key. if we don't,
+        # complex type will raise error
+        with pytest.raises(TypeError):
+            fn = self.make_complex_cache_fn(
+                backend,
+            )(tmp_path)
+
+        fn = self.make_complex_cache_fn(
+            backend,
+            cache_key=lambda self, val: val.value.to_bytes(),
+        )(tmp_path)
+        assert fn(self.Integer(15)) == 225
+
+        fn = self.make_complex_cache_fn(
+            backend,
+            cache_ser_args={"val": lambda val: val.value},
+        )(tmp_path)
+        assert fn(self.Integer(25)) == 625
+
     def test_flat_cache(self, tmp_path: Path, backend: Backend):
         fn = self.make_flat_cache_fn(backend)(tmp_path)
 
@@ -212,6 +293,47 @@ class TestCacheHelper:
         assert fn([3, 4, 7]) == [18, 32, 98]
         fn.coefficient = 1
         assert fn([3, 4, 7]) == [18, 32, 98]
+
+    def test_flat_cache_args(self, tmp_path: Path, backend: Backend):
+        # if we specify no argument will be used during caching
+        # calling with different arguments will always return the same result
+        fn = self.make_flat_cache_fn(backend, cache_args=[])(tmp_path)
+        assert fn([2, 4]) == [4, 4]
+        assert fn([3, 5]) == [4, 4]
+
+        # we also can specify the argument from self such as coefficient
+        # doing so, the result will be different when the coefficient change
+        for cache_self_args in [
+            "coefficient",
+            CacheArgsHelper.gen_cache_self_args("coefficient"),
+        ]:
+            fn = self.make_flat_cache_fn(
+                backend,
+                cache_self_args=cache_self_args,
+            )(tmp_path)
+            assert fn([7, 9]) == [49, 81]
+            fn.coefficient = 2
+            assert fn([7, 9]) == [98, 162]
+
+        # we can customize how to serialize each argument to
+        # make it friendly with cache key. if we don't,
+        # complex type will raise error
+        with pytest.raises(TypeError):
+            fn = self.make_complex_flat_cache_fn(
+                backend,
+            )(tmp_path)
+
+        fn = self.make_complex_flat_cache_fn(
+            backend,
+            cache_key=lambda self, val: val.value.to_bytes(),
+        )(tmp_path)
+        assert fn([self.Integer(11), self.Integer(13)]) == [121, 169]
+
+        fn = self.make_complex_flat_cache_fn(
+            backend,
+            cache_ser_args={"val": lambda val: val.value},
+        )(tmp_path)
+        assert fn([self.Integer(21), self.Integer(23)]) == [441, 529]
 
     def test_cache_disable(self, tmp_path: Path, backend: Backend):
         for disable in ["disable", True]:

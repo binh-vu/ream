@@ -30,13 +30,13 @@ from typing import (
 
 import orjson
 import serde.prelude as serde
+from hugedict.misc import Chain2, identity
+from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from loguru import logger
 from serde.helper import AVAILABLE_COMPRESSIONS, JsonSerde, get_open_fn
 from timer import Timer
 from typing_extensions import Self
 
-from hugedict.misc import Chain2, identity
-from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from ream.fs import FS
 from ream.helper import ContextContainer, orjson_dumps
 
@@ -739,17 +739,21 @@ class Cache:
     def cache(
         backend: Backend,
         cache_args: Optional[list[str]] = None,
-        cache_self_args: Optional[Callable[..., dict]] = None,
+        cache_self_args: Optional[str | Callable[..., dict]] = None,
+        cache_ser_args: Optional[dict[str, ArgSer]] = None,
         cache_key: Optional[CacheKeyFn] = None,
-        mem_persist: bool = False,
-        cache_attr: str = "_cache",
         disable: bool | str | Callable[[Any], bool] = False,
     ):
         if isinstance(disable, bool) and disable:
             return identity
 
+        if isinstance(cache_self_args, str):
+            cache_self_args = CacheArgsHelper.gen_cache_self_args(cache_self_args)
+
         def wrapper_fn(func):
-            cache_args_helper = CacheArgsHelper.from_actor_func(func, cache_self_args)
+            cache_args_helper = CacheArgsHelper.from_actor_func(
+                func, cache_self_args, cache_ser_args
+            )
             if cache_args is not None:
                 cache_args_helper.keep_args(cache_args)
 
@@ -782,13 +786,6 @@ class Cache:
                         backend.set(key, output)
                         return output
 
-            if mem_persist:
-                return Cache.mem(
-                    cache_args=cache_args,
-                    cache_self_args=cache_self_args,
-                    cache_key=cache_key,
-                    cache_attr=cache_attr,
-                )(fn)
             return fn
 
         return wrapper_fn
@@ -797,16 +794,18 @@ class Cache:
     def flat_cache(
         backend: Backend,
         cache_args: Optional[list[str]] = None,
-        cache_self_args: Optional[Callable[..., dict]] = None,
+        cache_self_args: Optional[str | Callable[..., dict]] = None,
         cache_ser_args: Optional[dict[str, ArgSer]] = None,
+        cache_key: Optional[CacheKeyFn] = None,
         flat_output: Optional[Callable[..., list]] = None,
         unflat_output: Optional[Callable[..., Any]] = None,
-        mem_persist: bool = False,
-        cache_attr: str = "_cache",
         disable: bool | str | Callable[[Any], bool] = False,
     ) -> Callable[[F], F]:
         if isinstance(disable, bool) and disable:
             return identity
+
+        if isinstance(cache_self_args, str):
+            cache_self_args = CacheArgsHelper.gen_cache_self_args(cache_self_args)
 
         def wrapper_fn(func):
             cache_args_helper = CacheArgsHelper.from_actor_func(
@@ -829,16 +828,18 @@ class Cache:
                     seq_arg_index = i
             assert seq_arg_name is not None
 
-            # now we have only one sequence arg, we go ahead and change it to its item type
-            cache_args_helper.argtypes[seq_arg_name] = get_args(
-                cache_args_helper.argtypes[seq_arg_name]
-            )[0]
+            keyfn = cache_key
+            if keyfn is None:
+                # now we have only one sequence arg, we go ahead and change it to its item type
+                cache_args_helper.argtypes[seq_arg_name] = get_args(
+                    cache_args_helper.argtypes[seq_arg_name]
+                )[0]
 
-            # ensure that we can generate a cache key function
-            cache_args_helper.ensure_auto_cache_key_friendly()
-            keyfn = lambda self, *args, **kwargs: orjson_dumps(
-                cache_args_helper.get_args(self, *args, **kwargs)
-            )
+                # ensure that we can generate a cache key function
+                cache_args_helper.ensure_auto_cache_key_friendly()
+                keyfn = lambda self, *args, **kwargs: orjson_dumps(
+                    cache_args_helper.get_args(self, *args, **kwargs)
+                )
 
             # now let generate flatten functions for input & output
             def flat_inargs(self, *args, **kwargs):
@@ -918,17 +919,22 @@ class Cache:
                 ]
 
                 finished_jobs = []
-                unfinished_jobs_index = []
                 unfinished_jobs = []
+                key_unfinished_jobs = {}
+                unfinished_jobs_key = []
                 for i, (in_args, in_kwargs) in enumerate(lst_inargs):
                     with backend.context(self, *in_args, **in_kwargs):
                         key = lst_inargs_keys[i]
                         if backend.has_key(key):
                             finished_jobs.append(backend.get(key))
                         else:
-                            unfinished_jobs.append((in_args, in_kwargs))
-                            unfinished_jobs_index.append(i)
                             finished_jobs.append(None)
+                            if key not in key_unfinished_jobs:
+                                key_unfinished_jobs[key] = [i]
+                                unfinished_jobs.append((in_args, in_kwargs))
+                                unfinished_jobs_key.append(key)
+                            else:
+                                key_unfinished_jobs[key].append(i)
 
                 if len(unfinished_jobs) > 0:
                     # finish the remaining jobs
@@ -938,17 +944,21 @@ class Cache:
                     output = func(self, *subargs, **subkwargs)
 
                     # unroll the output and catch the unfinished args
-                    for i, out in zip(
-                        unfinished_jobs_index,
-                        flat_output_fn(self, output, unfinished_jobs),
+                    flatten_output = flat_output_fn(self, output, unfinished_jobs)
+                    assert len(flatten_output) == len(unfinished_jobs)
+                    for unfinished_job, out, key in zip(
+                        unfinished_jobs,
+                        flatten_output,
+                        unfinished_jobs_key,
                     ):
                         with backend.context(
-                            self, *unfinished_jobs[i][0], **unfinished_jobs[i][1]
+                            self, *unfinished_job[0], **unfinished_job[1]
                         ):
-                            key = lst_inargs_keys[i]
                             backend.set(key, out)
-                            finished_jobs[i] = out
+                            for i in key_unfinished_jobs[key]:
+                                finished_jobs[i] = out
 
+                assert all(job is not None for job in finished_jobs)
                 # now we need to merge the result.
                 return unflat_output_fn(self, finished_jobs, *args, **kwargs)
 
@@ -968,20 +978,20 @@ class CacheArgsHelper:
         args: dict[str, Parameter],
         argtypes: dict[str, Optional[Type]],
         self_args: Optional[Callable[..., dict]] = None,
-        cache_argser: Optional[dict[str, ArgSer]] = None,
+        cache_ser_args: Optional[dict[str, ArgSer]] = None,
     ):
         self.args = args
         self.argtypes = argtypes
         self.argnames: list[str] = list(self.args.keys())
         self.cache_args = self.argnames
-        self.cache_argser: dict[str, ArgSer] = cache_argser or {}
+        self.cache_ser_args: dict[str, ArgSer] = cache_ser_args or {}
         self.cache_self_args = self_args or None
 
     @staticmethod
     def from_actor_func(
         func: Callable,
         self_args: Optional[Callable[..., dict]] = None,
-        cache_argser: Optional[dict[str, ArgSer]] = None,
+        cache_ser_args: Optional[dict[str, ArgSer]] = None,
     ):
         args: dict[str, Parameter] = {}
         try:
@@ -1008,7 +1018,7 @@ class CacheArgsHelper:
         ), "The first argument of the method must be self, an instance of BaseActor"
         args.pop("self")
 
-        return CacheArgsHelper(args, argtypes, self_args, cache_argser)
+        return CacheArgsHelper(args, argtypes, self_args, cache_ser_args)
 
     def keep_args(self, names: Iterable[str]) -> None:
         self.cache_args = list(names)
@@ -1027,7 +1037,7 @@ class CacheArgsHelper:
                     f"Variable arguments are not supported for automatically generating caching key to cache function call. Found one with name: {name}"
                 )
 
-            if name in self.cache_argser:
+            if name in self.cache_ser_args:
                 # the users provide a function to serialize the argument manually, so we trust the user.
                 continue
 
@@ -1083,7 +1093,7 @@ class CacheArgsHelper:
         if self.cache_self_args is not None:
             out.update(self.cache_self_args(obj))
 
-        for name, ser_fn in self.cache_argser.items():
+        for name, ser_fn in self.cache_ser_args.items():
             out[name] = ser_fn(out[name])
         return out
 
@@ -1123,9 +1133,11 @@ class Backend(ABC):
         compression: Optional[Literal["gz", "bz2", "lz4"]] = None,
     ):
         if compression == "gz":
-            ser = lambda x: gzip.compress(ser(x), mtime=0)
+            origin_ser = ser
+            ser = lambda x: gzip.compress(origin_ser(x), mtime=0)
             deser = lambda x: deser(gzip.decompress(x))
         elif compression == "bz2":
+            origin_ser = ser
             ser = lambda x: bz2.compress(ser(x))
             deser = lambda x: deser(bz2.decompress(x))
         elif compression == "lz4":

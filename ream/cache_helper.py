@@ -28,21 +28,19 @@ from typing import (
 )
 
 import orjson
-import serde.prelude as serde
-from hugedict.misc import Chain2, identity
-from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from loguru import logger
 from serde.helper import (
     AVAILABLE_COMPRESSIONS,
     DEFAULT_ORJSON_OPTS,
     JsonSerde,
-    PathLike,
     _orjson_default,
     orjson_dumps,
 )
 from timer import Timer
 from typing_extensions import Self
 
+from hugedict.misc import Chain2, identity
+from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from ream.fs import FS
 from ream.helper import ContextContainer, orjson_dumps
 
@@ -66,82 +64,11 @@ if TYPE_CHECKING:
     from loguru import Logger
 
 
-class JLBackend:
+class SqliteBackendFactory:
     @staticmethod
-    def file(
-        filename: Optional[Union[str, Callable[..., str]]] = None,
+    def pickle(
         compression: Optional[AVAILABLE_COMPRESSIONS] = None,
-        mem_persist: bool = False,
-        cls: Optional[Type[JsonSerde]] = None,
-        log_serde_time: bool = False,
-    ):
-        backend = FileBackend(
-            ser=JLBackend.ser,
-            deser=JLBackend.deser if cls is None else partial(JLBackend.deser_cls, cls),
-            filename=filename,
-            fileext="jl",
-            compression=compression,
-        )
-        return wrap_backend(backend, mem_persist, log_serde_time)
-
-    @staticmethod
-    def ser(
-        objs: Sequence[dict] | Sequence[tuple] | Sequence[list] | Sequence[JsonSerde],
-        orjson_opts: int | None = DEFAULT_ORJSON_OPTS,
-        orjson_default: Callable[[Any], Any] | None = None,
-    ):
-        out = []
-        if len(objs) > 0 and hasattr(objs[0], "to_dict"):
-            for obj in objs:
-                out.append(
-                    orjson_dumps(
-                        obj.to_dict(),  # type: ignore
-                        option=orjson_opts,
-                        default=orjson_default or _orjson_default,
-                    )
-                )
-        else:
-            for obj in objs:
-                out.append(
-                    orjson_dumps(
-                        obj,
-                        option=orjson_opts,
-                        default=orjson_default or _orjson_default,
-                    )
-                )
-        return b"\n".join(out)
-
-    @staticmethod
-    def deser(data: bytes):
-        return [orjson.loads(line) for line in data.splitlines()]
-
-    @staticmethod
-    def deser_cls(clz: Type[JsonSerde], data: bytes):
-        return [clz.from_dict(orjson.loads(line)) for line in data.splitlines()]
-
-
-class PickleBackend:
-    @staticmethod
-    def file(
-        filename: Optional[Union[str, Callable[..., str]]] = None,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
-        mem_persist: bool = False,
-        log_serde_time: bool = False,
-    ):
-        backend = FileBackend(
-            ser=pickle.dumps,
-            deser=pickle.loads,
-            filename=filename,
-            fileext="pkl",
-            compression=compression,
-        )
-        return wrap_backend(backend, mem_persist, log_serde_time)
-
-    @staticmethod
-    def sqlite(
-        filename: Optional[Union[str, Callable[..., str]]] = None,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
-        mem_persist: bool = False,
+        mem_persist: Optional[Union[MemBackend, bool]] = None,
         log_serde_time: bool = False,
     ):
         backend = SqliteBackend(
@@ -152,7 +79,7 @@ class PickleBackend:
         return wrap_backend(backend, mem_persist, log_serde_time)
 
 
-class ClsSerdeBackend:
+class ClsSerdeBackendFactory:
     """A cache that uses the save/load methods of a class as deser/ser functions."""
 
     @staticmethod
@@ -160,7 +87,7 @@ class ClsSerdeBackend:
         cls: type[SerdeProtocol],  # type: ignore
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[AVAILABLE_COMPRESSIONS] = None,
-        mem_persist: bool = False,
+        mem_persist: Optional[Union[MemBackend, bool]] = None,
         fileext: Optional[str | list[str]] = None,
         log_serde_time: bool = False,
     ):
@@ -185,11 +112,11 @@ class ClsSerdeBackend:
         cls: type[SaveLoadDirProtocol] | Sequence[type[SaveLoadDirProtocol]],  # type: ignore
         dirname: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[AVAILABLE_COMPRESSIONS] = None,
-        mem_persist: bool = False,
+        mem_persist: Optional[Union[MemBackend, bool]] = None,
         log_serde_time: bool = False,
     ):
         if isinstance(cls, Sequence):
-            obj = ClsSerdeBackend.get_tuple_serde(cls, None)
+            obj = ClsSerdeBackendFactory.get_tuple_serde(cls, None)
             ser = obj["ser"]
             deser = obj["deser"]
         else:
@@ -254,10 +181,134 @@ class ClsSerdeBackend:
         }
 
 
+class FileBackendFactory:
+    @staticmethod
+    def pickle(
+        filename: Optional[Union[str, Callable[..., str]]] = None,
+        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        mem_persist: Optional[Union[MemBackend, bool]] = None,
+        log_serde_time: bool = False,
+    ):
+        backend = FileBackend(
+            ser=pickle.dumps,
+            deser=pickle.loads,
+            filename=filename,
+            fileext="pkl",
+            compression=compression,
+        )
+        return wrap_backend(backend, mem_persist, log_serde_time)
+
+    @staticmethod
+    def jl(
+        filename: Optional[Union[str, Callable[..., str]]] = None,
+        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        mem_persist: Optional[Union[MemBackend, bool]] = None,
+        cls: Optional[Type[JsonSerde]] = None,
+        log_serde_time: bool = False,
+    ):
+        backend = FileBackend(
+            ser=FileBackendFactory.jl_ser,
+            deser=FileBackendFactory.jl_deser
+            if cls is None
+            else partial(FileBackendFactory.jl_deser_cls, cls),
+            filename=filename,
+            fileext="jl",
+            compression=compression,
+        )
+        return wrap_backend(backend, mem_persist, log_serde_time)
+
+    @staticmethod
+    def json(
+        filename: Optional[Union[str, Callable[..., str]]] = None,
+        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        mem_persist: Optional[Union[MemBackend, bool]] = None,
+        cls: Optional[Type[JsonSerde]] = None,
+        log_serde_time: bool = False,
+        indent: Literal[0, 2] = 0,
+    ):
+        backend = FileBackend(
+            ser=partial(
+                FileBackendFactory.json_ser,
+                orjson_opts=DEFAULT_ORJSON_OPTS | orjson.OPT_INDENT_2,
+            )
+            if indent == 2
+            else FileBackendFactory.json_ser,
+            deser=FileBackendFactory.json_deser
+            if cls is None
+            else partial(FileBackendFactory.json_deser_cls, cls),
+            filename=filename,
+            fileext="json",
+            compression=compression,
+        )
+        return wrap_backend(backend, mem_persist, log_serde_time)
+
+    @staticmethod
+    def json_ser(
+        obj: dict | tuple | list | JsonSerde,
+        orjson_opts: int | None = DEFAULT_ORJSON_OPTS,
+        orjson_default: Callable[[Any], Any] | None = None,
+    ):
+        if hasattr(obj, "to_dict"):
+            return orjson_dumps(
+                obj.to_dict(),  # type: ignore
+                option=orjson_opts,
+                default=orjson_default or _orjson_default,
+            )
+        else:
+            return orjson_dumps(
+                obj,
+                option=orjson_opts,
+                default=orjson_default or _orjson_default,
+            )
+
+    @staticmethod
+    def json_deser(data: bytes):
+        return orjson.loads(data)
+
+    @staticmethod
+    def json_deser_cls(clz: Type[JsonSerde], data: bytes):
+        return clz.from_dict(orjson.loads(data))
+
+    @staticmethod
+    def jl_ser(
+        objs: Sequence[dict] | Sequence[tuple] | Sequence[list] | Sequence[JsonSerde],
+        orjson_opts: int | None = DEFAULT_ORJSON_OPTS,
+        orjson_default: Callable[[Any], Any] | None = None,
+    ):
+        out = []
+        if len(objs) > 0 and hasattr(objs[0], "to_dict"):
+            for obj in objs:
+                out.append(
+                    orjson_dumps(
+                        obj.to_dict(),  # type: ignore
+                        option=orjson_opts,
+                        default=orjson_default or _orjson_default,
+                    )
+                )
+        else:
+            for obj in objs:
+                out.append(
+                    orjson_dumps(
+                        obj,
+                        option=orjson_opts,
+                        default=orjson_default or _orjson_default,
+                    )
+                )
+        return b"\n".join(out)
+
+    @staticmethod
+    def jl_deser(data: bytes):
+        return [orjson.loads(line) for line in data.splitlines()]
+
+    @staticmethod
+    def jl_deser_cls(clz: Type[JsonSerde], data: bytes):
+        return [clz.from_dict(orjson.loads(line)) for line in data.splitlines()]
+
+
 class Cache:
-    jl = JLBackend
-    pickle = PickleBackend
-    cls = ClsSerdeBackend
+    file = FileBackendFactory
+    sqlite = SqliteBackendFactory
+    cls = ClsSerdeBackendFactory
 
     @staticmethod
     def cache(
@@ -713,6 +764,9 @@ class MemBackend(Backend):
     def set(self, key: bytes, value: Value) -> None:
         self.key2value[key] = value
 
+    def clear(self):
+        self.key2value.clear()
+
 
 class FileBackend(Backend):
     def __init__(
@@ -1086,9 +1140,15 @@ def unwrap_cache_decorators(cls: type, methods: list[str] | None = None):
             setattr(cls, method, fn)
 
 
-def wrap_backend(backend: Backend, mem_persist: bool, log_serde_time: bool):
+def wrap_backend(
+    backend: Backend,
+    mem_persist: Optional[Union[MemBackend, bool]],
+    log_serde_time: bool,
+):
     if log_serde_time:
         backend = LogSerdeTimeBackend(backend)
     if mem_persist:
-        backend = ReplicatedBackends([MemBackend(), backend])
+        if mem_persist is not None:
+            mem_persist = MemBackend()
+        backend = ReplicatedBackends([mem_persist, backend])
     return backend

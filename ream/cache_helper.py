@@ -58,7 +58,7 @@ T = TypeVar("T")
 F = TypeVar("F")
 Value = Any
 ARGS = Any
-
+is_template_str = lambda s: s.find("{") != -1
 
 if TYPE_CHECKING:
     from loguru import Logger
@@ -74,6 +74,28 @@ class SqliteBackendFactory:
         backend = SqliteBackend(
             ser=pickle.dumps,
             deser=pickle.loads,
+            compression=compression,
+        )
+        return wrap_backend(backend, mem_persist, log_serde_time)
+
+    @staticmethod
+    def json(
+        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        mem_persist: Optional[Union[MemBackend, bool]] = None,
+        log_serde_time: bool = False,
+        cls: Optional[Type[JsonSerde]] = None,
+        indent: Literal[0, 2] = 0,
+    ):
+        backend = SqliteBackend(
+            ser=partial(
+                FileBackendFactory.json_ser,
+                orjson_opts=DEFAULT_ORJSON_OPTS | orjson.OPT_INDENT_2,
+            )
+            if indent == 2
+            else FileBackendFactory.json_ser,
+            deser=FileBackendFactory.json_deser
+            if cls is None
+            else partial(FileBackendFactory.json_deser_cls, cls),
             compression=compression,
         )
         return wrap_backend(backend, mem_persist, log_serde_time)
@@ -339,7 +361,7 @@ class Cache:
                     cache_args_helper.get_args(self, *args, **kwargs)
                 )
 
-            backend.postinit(func)
+            backend.postinit(func, cache_args_helper)
 
             @wraps(func)
             def fn(self, *args, **kwargs):
@@ -474,7 +496,7 @@ class Cache:
             else:
                 unflat_output_fn = unflat_output
 
-            backend.postinit(func)
+            backend.postinit(func, cache_args_helper)
 
             @wraps(func)
             def fn(self: HasWorkingFsTrait, *args, **kwargs):
@@ -699,6 +721,19 @@ class CacheArgsHelper:
 
         return get_self_args
 
+    def get_string_template_func(self, template: str):
+        def interpolate(obj, *args, **kwargs):
+            out = {name: value for name, value in zip(self.args, args)}
+            out.update(
+                [
+                    (name, kwargs.get(name, self.args[name].default))
+                    for name in self.argnames[len(args) :]
+                ]
+            )
+            return template.format(**out)
+
+        return interpolate
+
 
 class Backend(ABC):
     def __init__(
@@ -728,7 +763,7 @@ class Backend(ABC):
         self.ser = ser
         self.deser = deser
 
-    def postinit(self, func: Callable):
+    def postinit(self, func: Callable, args_helper: CacheArgsHelper):
         if not hasattr(self, "_is_postinited"):
             self._is_postinited = True
         else:
@@ -782,15 +817,18 @@ class FileBackend(Backend):
         self.fileext = fileext
         self.container = ContextContainer()
 
-    def postinit(self, func: Callable):
-        super().postinit(func)
+    def postinit(self, func: Callable, args_helper: CacheArgsHelper):
+        super().postinit(func, args_helper)
         if self.filename is None:
             self.filename = func.__name__
+        elif isinstance(self.filename, str) and is_template_str(self.filename):
+            self.filename = args_helper.get_string_template_func(self.filename)
+
+        if isinstance(self.filename, str):
             if self.fileext is not None:
                 assert not self.fileext.startswith(".")
                 self.filename += f".{self.fileext}"
 
-        if isinstance(self.filename, str):
             assert (
                 self.filename.find(".") != -1
             ), "Must have file extension to be considered as a file"
@@ -801,7 +839,10 @@ class FileBackend(Backend):
             filename = self.filename
         else:
             assert self.filename is not None
-            filename = self.filename(args[0], *args[1], **args[2])
+            filename = self.filename(obj, *args, **kwargs)
+            if self.fileext is not None:
+                assert not self.fileext.startswith(".")
+                filename += f".{self.fileext}"
             assert (
                 filename.find(".") != -1
             ), "Must have file extension to be considered as a file"
@@ -862,10 +903,12 @@ class DirBackend(Backend):
         self.compression: Optional[AVAILABLE_COMPRESSIONS] = compression
         self.container = ContextContainer()
 
-    def postinit(self, func: Callable):
-        super().postinit(func)
+    def postinit(self, func: Callable, args_helper: CacheArgsHelper):
+        super().postinit(func, args_helper)
         if self.dirname is None:
             self.dirname = func.__name__
+        elif isinstance(self.dirname, str) and is_template_str(self.dirname):
+            self.dirname = args_helper.get_string_template_func(self.dirname)
 
         if isinstance(self.dirname, str):
             assert (
@@ -878,7 +921,7 @@ class DirBackend(Backend):
             dirname = self.dirname
         else:
             assert self.dirname is not None
-            dirname = self.dirname(args[0], *args[1], **args[2])
+            dirname = self.dirname(obj, *args, **kwargs)
             assert (
                 dirname.find(".") == -1
             ), "Must not have file extension to be considered as a directory"
@@ -924,8 +967,8 @@ class DirBackend(Backend):
 
 
 class SqliteBackend(Backend):
-    def postinit(self, func: Callable):
-        super().postinit(func)
+    def postinit(self, func: Callable, args_helper: CacheArgsHelper):
+        super().postinit(func, args_helper)
         self.dbname = f"{func.__name__}.sqlite"
         self.dbconn: SqliteDict = None  # type: ignore
 
@@ -963,10 +1006,10 @@ class ReplicatedBackends(Backend):
     def __init__(self, backends: list[Backend]):
         self.backends = backends
 
-    def postinit(self, func: Callable[..., Any]):
-        super().postinit(func)
+    def postinit(self, func: Callable[..., Any], args_helper: CacheArgsHelper):
+        super().postinit(func, args_helper)
         for backend in self.backends:
-            backend.postinit(func)
+            backend.postinit(func, args_helper)
 
     @contextmanager
     def context(self, obj: HasWorkingFsTrait, *args, **kwargs):
@@ -1016,8 +1059,8 @@ class LogSerdeTimeBackend(Backend):
         self.backend = backend
         self.logger: Logger = None  # type: ignore
 
-    def postinit(self, func: Callable):
-        self.backend.postinit(func)
+    def postinit(self, func: Callable, args_helper: CacheArgsHelper):
+        self.backend.postinit(func, args_helper)
         self.logger = logger
 
     @contextmanager

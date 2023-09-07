@@ -52,7 +52,9 @@ def configure_loguru():
 
 
 def orjson_dumps(obj, **kwargs):
-    return orjson.dumps(obj, default=_orjson_default, **kwargs)
+    if "default" not in kwargs:
+        kwargs["default"] = _orjson_default
+    return orjson.dumps(obj, **kwargs)
 
 
 def _logger_formatter_colorful(record):

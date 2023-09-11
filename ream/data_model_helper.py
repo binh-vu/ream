@@ -792,6 +792,9 @@ class NumpyDataModelHelper:
                     raise TypeError(
                         f"Index element {value} does not have the form: (start, end, nested_index)"
                     )
+                if value[0] == value[1] and len(value[2]) == 0:
+                    # it's empty, we just skip it -- otherwise, we may have a set of {X, 0}, which will raise an error
+                    continue
                 level.append(cls._get_range_index_level(npmodel, value[2]) + 1)
             else:
                 raise TypeError(

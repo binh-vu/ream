@@ -4,10 +4,11 @@ import os
 from pathlib import Path
 from typing import Union
 
+from slugify import slugify
+
 from ream.actor_state import ActorState
 from ream.actor_version import ActorVersion
 from ream.fs import FS
-from slugify import slugify
 
 
 class ReamWorkspace:
@@ -25,7 +26,11 @@ class ReamWorkspace:
 
     @staticmethod
     def init(workdir: Union[Path, str]):
-        ReamWorkspace.instance = ReamWorkspace(workdir)
+        if ReamWorkspace.instance is not None:
+            # allow calling re-initialization if the workdir is the same
+            assert ReamWorkspace.instance.workdir == Path(workdir)
+        else:
+            ReamWorkspace.instance = ReamWorkspace(workdir)
         return ReamWorkspace.instance
 
     def reserve_working_dir(self, state: ActorState) -> Path:

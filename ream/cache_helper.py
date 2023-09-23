@@ -1075,14 +1075,14 @@ class LogSerdeTimeBackend(Backend):
 
     def get(self, key: bytes) -> Value:
         with Timer().watch_and_report(
-            f"serialize",
+            f"deserialize",
             self.logger.debug,
         ):
             return self.backend.get(key)
 
     def set(self, key: bytes, value: Value) -> None:
         with Timer().watch_and_report(
-            f"deserialize",
+            f"serialize",
             self.logger.debug,
         ):
             self.backend.set(key, value)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import bz2
 import gzip
 import pickle
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from contextlib import contextmanager
@@ -787,20 +788,57 @@ class Backend(ABC):
 
 
 class MemBackend(Backend):
+    """A backend that caches in memory.
+
+    Note that due to the design of the `Cache.cache` function, this backend is shared
+    across instances of the same class because the backend instance is tied to the
+    wrapped function (when you create a new class instance, the function isn't being
+    wrapped again hence, the new class instance will refer to the same backend instance).
+
+    To handle the above issue, one method is to store the cache dictionary inside each
+    class instance. However, it will be difficult to clear the cache from the list of
+    backends (unless we keep the list of instances of the class as well). Therefore,
+    we propose to keep a weakref to each class instance, and use the id of the instance
+    to identify which cache dictionary to use.
+    """
+
     def __init__(self):
-        self.key2value: dict[bytes, Value] = {}
+        self.id2cache: dict[int, dict[bytes, Value]] = {}
+        self.id2ref: dict[int, weakref.ReferenceType] = {}
+        self.current_id = None
+
+    @contextmanager
+    def context(self, obj: HasWorkingFsTrait, *args, **kwargs):
+        """"""
+        oid = id(obj)
+        if oid not in self.id2cache:
+            self.id2cache[oid] = {}
+
+            # create a weakref
+            def cleanup(ref):
+                del self.id2cache[oid]
+                del self.id2ref[oid]
+
+            self.id2ref[oid] = weakref.ref(obj, cleanup)
+
+        self.current_id = oid
+        yield None
 
     def has_key(self, key: bytes) -> bool:
-        return key in self.key2value
+        assert self.current_id is not None
+        return key in self.id2cache[self.current_id]
 
     def get(self, key: bytes) -> Value:
-        return self.key2value[key]
+        assert self.current_id is not None
+        return self.id2cache[self.current_id][key]
 
     def set(self, key: bytes, value: Value) -> None:
-        self.key2value[key] = value
+        assert self.current_id is not None
+        self.id2cache[self.current_id][key] = value
 
     def clear(self):
-        self.key2value.clear()
+        self.id2cache.clear()
+        self.id2ref.clear()
 
 
 class FileBackend(Backend):

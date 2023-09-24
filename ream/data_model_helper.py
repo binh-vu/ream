@@ -659,6 +659,8 @@ class NumpyDataModelHelper:
         assert len(metadata.index_props) <= 1
         if len(metadata.index_props) == 1:
             index = getattr(npmodel, metadata.index_props[0])
+            if isinstance(index, OffsetIndex) and isinstance(index.index, dict):
+                index = cls.offset_index(deepcopy(index.index), -index.offset)
             assert isinstance(index, dict)
             pdindex = pd.MultiIndex.from_tuples(cls.index_to_array(index))
             return pd.DataFrame(
@@ -829,7 +831,7 @@ class NumpyDataModelHelper:
     @classmethod
     def index_to_array(cls, index: dict, prefix: tuple[str, ...] = tuple()):
         """Convert a dictionary index to an array that is ready to be loaded into
-        pandas's multiindex via pd.MultiIndex.from_tuples
+        pandas's multiindex via pd.MultiIndex.from_tuples.
         """
         arr = []
         for key, value in index.items():

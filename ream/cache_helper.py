@@ -3,10 +3,12 @@ from __future__ import annotations
 import bz2
 import gzip
 import pickle
+import re
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from contextlib import contextmanager
+from dataclasses import fields
 from functools import lru_cache, partial, wraps
 from inspect import Parameter, signature
 from pathlib import Path
@@ -42,6 +44,7 @@ from typing_extensions import Self
 
 from hugedict.misc import Chain2, identity
 from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
+from ream.actors.base import BaseActor
 from ream.fs import FS
 from ream.helper import ContextContainer, orjson_dumps
 
@@ -1186,6 +1189,12 @@ class CacheableFn(Generic[T], ABC, Cacheable):
     def __call__(self, args: T) -> Any:
         """This is where to put the function body. To cache it, wraps it with @Cache.<X> decorators"""
         ...
+
+
+def assign_dataclass_field_names(cls: type[T]):
+    """Set back the fields of the dataclass to be the same as the name of the fields so they can use T.<field> as the field name"""
+    for field in fields(cls):
+        setattr(cls, field.name, field.name)
 
 
 class SerdeProtocol(Protocol):

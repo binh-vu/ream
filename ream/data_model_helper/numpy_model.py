@@ -34,7 +34,12 @@ from typing_extensions import Self
 
 from ream.data_model_helper.batch_file_manager import BatchFileManager, VirtualDir
 from ream.data_model_helper.index import Index, OffsetIndex
-from ream.helper import get_classpath, has_dict_with_nonstr_keys, import_attr
+from ream.helper import (
+    Compression,
+    get_classpath,
+    has_dict_with_nonstr_keys,
+    import_attr,
+)
 
 
 @dataclass
@@ -230,7 +235,12 @@ class NumpyDataModel:
     ):
         getattr(self, field)[i:j] = value
 
-    def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+    def save(
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ):
         """Save the data model to a directory containing 2 files: `data.parq` and `index.bin`.
 
         Note: this function is carefully written so that the two files can be buffered to concatenate
@@ -252,16 +262,16 @@ class NumpyDataModel:
             for i in range(array2d.shape[1]):
                 cols[f"{name}_{i}"] = array2d[:, i]
 
-        dir.mkdir(parents=True, exist_ok=True)
+        loc.mkdir(parents=True, exist_ok=True)
         pq.write_table(
             pa.table(cols),
-            dir / "data.parq",
+            loc / "data.parq",
             compression=compression or "NONE",
         )
 
         if len(metadata.index_props) > 0:
             index_filename = get_filepath("index.bin", compression)
-            with get_open_fn(index_filename)(dir / index_filename, "wb") as f:
+            with get_open_fn(index_filename)(loc / index_filename, "wb") as f:
                 f.write(struct.pack("<I", len(metadata.index_props)))
                 for i, name in enumerate(metadata.index_props):
                     if metadata.index_prop_idxs[i][1] is not None:

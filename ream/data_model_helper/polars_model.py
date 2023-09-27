@@ -17,12 +17,11 @@ from typing import (
 
 import orjson
 import polars as pl
-from nptyping.ndarray import NDArrayMeta  # type: ignore
-from nptyping.shape_expression import get_dimensions  # type: ignore
-from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath, get_open_fn
+from polars.type_aliases import ParquetCompression
+from serde.helper import get_filepath, get_open_fn
 
 from ream.data_model_helper.index import Index
-from ream.helper import has_dict_with_nonstr_keys
+from ream.helper import Compression, has_dict_with_nonstr_keys, to_serde_compression
 
 
 @dataclass
@@ -109,7 +108,10 @@ class PolarDataModel:
             )
 
     def save(
-        self, dir: Path, compression: Optional[Literal["lz4", "gzip", "zstd"]] = None
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
     ):
         metadata = self._metadata
         if metadata is None:
@@ -117,23 +119,20 @@ class PolarDataModel:
                 f"{self.__class__.__qualname__}.init() must be called before usage to finish setting up the schema"
             )
 
-        dir.mkdir(parents=True, exist_ok=True)
+        loc.mkdir(parents=True, exist_ok=True)
         for name in metadata.df_props:
             df: pl.DataFrame = getattr(self, name)
             df.write_parquet(
-                dir / f"{name}.parq", compression=compression or "uncompressed"
+                loc / f"{name}.parq",
+                compression=to_polar_compression(compression),
+                compression_level=compression_level,
             )
 
         if len(metadata.index_props) > 0:
-            remap_compression: dict[Any, AVAILABLE_COMPRESSIONS] = {
-                "lz4": "lz4",
-                "gzip": "gz",
-            }
-
             index_filename = get_filepath(
-                "index.bin", remap_compression.get(compression, None)
+                "index.bin", to_serde_compression(compression)
             )
-            with get_open_fn(index_filename)(dir / index_filename, "wb") as f:
+            with get_open_fn(index_filename)(loc / index_filename, "wb") as f:
                 f.write(struct.pack("<I", len(metadata.index_props)))
                 for i, name in enumerate(metadata.index_props):
                     if metadata.index_prop_idxs[i][1] is not None:
@@ -144,9 +143,7 @@ class PolarDataModel:
                     f.write(serindex)
 
     @classmethod
-    def load(
-        cls, dir: Path, compression: Optional[Literal["lz4", "gzip", "zstd"]] = None
-    ):
+    def load(cls, loc: Path, compression: Optional[Compression] = None):
         metadata = cls._metadata
         if metadata is None:
             raise Exception(
@@ -156,14 +153,10 @@ class PolarDataModel:
         kwargs = {}
 
         if len(metadata.index_props) > 0:
-            remap_compression: dict[Any, AVAILABLE_COMPRESSIONS] = {
-                "lz4": "lz4",
-                "gzip": "gz",
-            }
             index_filename = get_filepath(
-                "index.bin", remap_compression.get(compression, None)
+                "index.bin", to_serde_compression(compression)
             )
-            with get_open_fn(index_filename)(dir / index_filename, "rb") as f:
+            with get_open_fn(index_filename)(loc / index_filename, "rb") as f:
                 n_indices = struct.unpack("<I", f.read(4))[0]
                 for i in range(n_indices):
                     size = struct.unpack("<I", f.read(4))[0]
@@ -175,7 +168,7 @@ class PolarDataModel:
                     kwargs[metadata.index_props[i]] = index
 
         for name in metadata.df_props:
-            df = pl.read_parquet(dir / f"{name}.parq")
+            df = pl.read_parquet(loc / f"{name}.parq")
             kwargs[name] = df
 
         return cls(**kwargs)
@@ -183,18 +176,14 @@ class PolarDataModel:
 
 @dataclass
 class PolarDataModelContainer:
-    def save(
-        self, dir: Path, compression: Optional[Literal["lz4", "gzip", "zstd"]] = None
-    ):
+    def save(self, dir: Path, compression: Optional[Compression] = None):
         for field in fields(self):
             obj = getattr(self, field.name)
             assert isinstance(obj, (PolarDataModel, PolarDataModelContainer))
             obj.save(dir / field.name, compression)
 
     @classmethod
-    def load(
-        cls, dir: Path, compression: Optional[Literal["lz4", "gzip", "zstd"]] = None
-    ):
+    def load(cls, dir: Path, compression: Optional[Compression] = None):
         assert is_dataclass(cls)
         type_hints: dict[str, type] = get_type_hints(cls)
         kwargs = {}
@@ -221,3 +210,16 @@ class SingleLevelPolarDataModel(PolarDataModel):
 
 
 SingleLevelPolarDataModel.init()
+
+
+def to_polar_compression(
+    compression: Optional[Compression],
+) -> ParquetCompression:
+    if compression is None:
+        return "uncompressed"
+
+    seq: Sequence[ParquetCompression] = ["snappy", "gzip", "lz4", "zstd"]
+    if compression in seq:
+        return compression
+
+    raise Exception(f"Not supported compression: {compression}")

@@ -22,7 +22,7 @@ serde2 = "^1.6.0"
 hugedict = "^2.9.2"
 pyarrow = "^11.0.0"
 nptyping = "^2.5.0"
-
+polars = ">= 0.18.0"
 [tool.poetry.group.dev.dependencies]
 black = "^22.10.0"
 pytest = "^7.1.3"

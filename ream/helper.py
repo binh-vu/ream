@@ -12,6 +12,7 @@ import orjson
 from loguru import logger
 
 TYPE_ALIASES = {"typing.List": "list", "typing.Dict": "dict", "typing.Set": "set"}
+Compression = Literal["snappy", "gzip", "brotli", "lz4", "zstd", "bz2"]
 
 
 def get_classpath(type: Type) -> str:

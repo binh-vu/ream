@@ -11,4 +11,5 @@ from ream.data_model_helper.polars_model import (
     PolarDataModel,
     PolarDataModelContainer,
     PolarDataModelMetadata,
+    SingleLevelIndexedPLDataFrame,
 )

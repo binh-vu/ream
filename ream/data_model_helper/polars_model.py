@@ -202,14 +202,14 @@ I = TypeVar("I")
 
 
 @dataclass
-class SingleLevelPolarDataModel(PolarDataModel):
+class SingleLevelIndexedPLDataFrame(PolarDataModel):
     __slots__ = ["index", "value"]
 
     index: dict[str, tuple[int, int]]
     value: pl.DataFrame
 
 
-SingleLevelPolarDataModel.init()
+SingleLevelIndexedPLDataFrame.init()
 
 
 def to_polar_compression(

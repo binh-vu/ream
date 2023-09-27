@@ -3,7 +3,6 @@ from __future__ import annotations
 import bz2
 import gzip
 import pickle
-import re
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -31,22 +30,15 @@ from typing import (
 )
 
 import orjson
+from hugedict.misc import Chain2, identity
+from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from loguru import logger
-from serde.helper import (
-    AVAILABLE_COMPRESSIONS,
-    DEFAULT_ORJSON_OPTS,
-    JsonSerde,
-    _orjson_default,
-    orjson_dumps,
-)
+from serde.helper import DEFAULT_ORJSON_OPTS, JsonSerde, _orjson_default, orjson_dumps
 from timer import Timer
 from typing_extensions import Self
 
-from hugedict.misc import Chain2, identity
-from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
-from ream.actors.base import BaseActor
 from ream.fs import FS
-from ream.helper import ContextContainer, orjson_dumps
+from ream.helper import Compression, ContextContainer, orjson_dumps
 
 try:
     import lz4.frame as lz4_frame  # type: ignore
@@ -71,7 +63,7 @@ if TYPE_CHECKING:
 class SqliteBackendFactory:
     @staticmethod
     def pickle(
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         log_serde_time: bool = False,
     ):
@@ -84,7 +76,7 @@ class SqliteBackendFactory:
 
     @staticmethod
     def json(
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         log_serde_time: bool = False,
         cls: Optional[Type[JsonSerde]] = None,
@@ -112,7 +104,7 @@ class ClsSerdeBackendFactory:
     def file(
         cls: type[SerdeProtocol],  # type: ignore
         filename: Optional[Union[str, Callable[..., str]]] = None,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         fileext: Optional[str | list[str]] = None,
         log_serde_time: bool = False,
@@ -137,7 +129,7 @@ class ClsSerdeBackendFactory:
     def dir(
         cls: type[SaveLoadDirProtocol] | Sequence[type[SaveLoadDirProtocol]],  # type: ignore
         dirname: Optional[Union[str, Callable[..., str]]] = None,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         log_serde_time: bool = False,
     ):
@@ -211,7 +203,7 @@ class FileBackendFactory:
     @staticmethod
     def pickle(
         filename: Optional[Union[str, Callable[..., str]]] = None,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         log_serde_time: bool = False,
     ):
@@ -227,7 +219,7 @@ class FileBackendFactory:
     @staticmethod
     def jl(
         filename: Optional[Union[str, Callable[..., str]]] = None,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         cls: Optional[Type[JsonSerde]] = None,
         log_serde_time: bool = False,
@@ -246,7 +238,7 @@ class FileBackendFactory:
     @staticmethod
     def json(
         filename: Optional[Union[str, Callable[..., str]]] = None,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         cls: Optional[Type[JsonSerde]] = None,
         log_serde_time: bool = False,
@@ -744,7 +736,7 @@ class Backend(ABC):
         self,
         ser: Callable[[Any], bytes],
         deser: Callable[[bytes], Value],
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
     ):
         if compression == "gz":
             origin_ser = ser
@@ -851,7 +843,7 @@ class FileBackend(Backend):
         deser: Callable[[bytes], Any],
         filename: Optional[str | Callable[..., str]] = None,
         fileext: Optional[str] = None,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
     ):
         super().__init__(ser, deser, compression)
         self.filename = filename
@@ -933,15 +925,15 @@ class FileBackend(Backend):
 class DirBackend(Backend):
     def __init__(
         self,
-        ser: Callable[[Any, Path, Optional[AVAILABLE_COMPRESSIONS]], None],
-        deser: Callable[[Path, Optional[AVAILABLE_COMPRESSIONS]], Any],
+        ser: Callable[[Any, Path, Optional[Compression]], None],
+        deser: Callable[[Path, Optional[Compression]], Any],
         dirname: Optional[str | Callable[..., str]] = None,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        compression: Optional[Compression] = None,
     ):
         self.dirname = dirname
         self.ser = ser
         self.deser = deser
-        self.compression: Optional[AVAILABLE_COMPRESSIONS] = compression
+        self.compression: Optional[Compression] = compression
         self.container = ContextContainer()
 
     def postinit(self, func: Callable, args_helper: CacheArgsHelper):
@@ -1208,14 +1200,15 @@ class SerdeProtocol(Protocol):
 
 class SaveLoadDirProtocol(Protocol):
     def save(
-        self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
     ) -> None:
         ...
 
     @classmethod
-    def load(
-        cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
-    ) -> Self:
+    def load(cls, loc: Path, compression: Optional[Compression] = None) -> Self:
         ...
 
 

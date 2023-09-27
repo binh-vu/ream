@@ -28,7 +28,7 @@ from nptyping import NDArray, Shape
 from nptyping.ndarray import NDArrayMeta  # type: ignore
 from nptyping.shape_expression import get_dimensions  # type: ignore
 from nptyping.typing_ import Number
-from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath, get_open_fn
+from serde.helper import get_filepath, get_open_fn
 from tqdm import tqdm
 from typing_extensions import Self
 
@@ -39,6 +39,7 @@ from ream.helper import (
     get_classpath,
     has_dict_with_nonstr_keys,
     import_attr,
+    to_serde_compression,
 )
 
 
@@ -266,11 +267,14 @@ class NumpyDataModel:
         pq.write_table(
             pa.table(cols),
             loc / "data.parq",
-            compression=compression or "NONE",
+            compression=to_pyarrow_compression(compression),
+            compression_level=compression_level,
         )
 
         if len(metadata.index_props) > 0:
-            index_filename = get_filepath("index.bin", compression)
+            index_filename = get_filepath(
+                "index.bin", to_serde_compression(compression)
+            )
             with get_open_fn(index_filename)(loc / index_filename, "wb") as f:
                 f.write(struct.pack("<I", len(metadata.index_props)))
                 for i, name in enumerate(metadata.index_props):
@@ -285,20 +289,21 @@ class NumpyDataModel:
     def batch_save(
         cls,
         batch: Sequence[NumpyDataModel],
-        dir: Path,
-        compression: Optional[AVAILABLE_COMPRESSIONS],
+        loc: Path,
+        compression: Optional[Compression],
+        compression_level: Optional[int] = None,
     ):
         """Save a list of numpy data models into a directory. Different from the save method of numpy data model,
         data of multiple models will be concatenated into a single file.
         """
         with BatchFileManager() as filemanager:
-            virdir = VirtualDir(dir, filemanager=filemanager, mode="write")
+            virdir = VirtualDir(loc, filemanager=filemanager, mode="write")
             for npmodel in batch:
                 npmodel.save(virdir, compression)
                 filemanager.flush()
 
     @classmethod
-    def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+    def load(cls, loc: Path, compression: Optional[Compression] = None):
         metadata = cls._metadata
         if metadata is None:
             raise Exception(
@@ -308,8 +313,10 @@ class NumpyDataModel:
         indices = []
 
         if len(metadata.index_props) > 0:
-            index_filename = get_filepath("index.bin", compression)
-            with get_open_fn(index_filename)(dir / index_filename, "rb") as f:
+            index_filename = get_filepath(
+                "index.bin", to_serde_compression(compression)
+            )
+            with get_open_fn(index_filename)(loc / index_filename, "rb") as f:
                 n_indices = struct.unpack("<I", f.read(4))[0]
                 for i in range(n_indices):
                     size = struct.unpack("<I", f.read(4))[0]
@@ -320,7 +327,7 @@ class NumpyDataModel:
                         index = metadata.default_deserdict(f.read(size))
                     indices.append(index)
 
-        tbl = pq.read_table(dir / "data.parq")
+        tbl = pq.read_table(loc / "data.parq")
         kwargs = {}
         if len(metadata.array2d_props) == 0:
             for name in metadata.array_props:
@@ -358,9 +365,7 @@ class NumpyDataModel:
         return cls(**kwargs)
 
     @classmethod
-    def batch_load(
-        cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
-    ):
+    def batch_load(cls, dir: Path, compression: Optional[Compression] = None):
         with BatchFileManager() as filemanager:
             virdir = VirtualDir(dir, filemanager=filemanager, mode="read")
             output = []
@@ -374,18 +379,25 @@ class NumpyDataModel:
 
 @dataclass
 class NumpyDataModelContainer:
-    def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+    def save(
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ):
         index_props = []
         for field in fields(self):
             obj = getattr(self, field.name)
             if isinstance(obj, (NumpyDataModel, NumpyDataModelContainer)):
-                obj.save(dir / field.name, compression)
+                obj.save(loc / field.name, compression, compression_level)
             else:
                 index_props.append((field.name, obj))
 
         if len(index_props) > 0:
-            index_filename = get_filepath("index.bin", compression)
-            with get_open_fn(index_filename)(dir / index_filename, "wb") as f:
+            index_filename = get_filepath(
+                "index.bin", to_serde_compression(compression)
+            )
+            with get_open_fn(index_filename)(loc / index_filename, "wb") as f:
                 f.write(struct.pack("<I", len(index_props)))
                 for i, (name, obj) in enumerate(index_props):
                     if isinstance(obj, Index):
@@ -403,20 +415,21 @@ class NumpyDataModelContainer:
     def batch_save(
         cls,
         containers: Sequence[C],
-        dir: Path,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
     ):
         if len(containers) == 0:
             raise ValueError("containers must not be empty")
 
         with BatchFileManager() as filemanager:
-            virdir = VirtualDir(dir, filemanager=filemanager, mode="write")
+            virdir = VirtualDir(loc, filemanager=filemanager, mode="write")
             for container in containers:
-                container.save(virdir, compression)
+                container.save(virdir, compression, compression_level)
                 filemanager.flush()
 
     @classmethod
-    def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+    def load(cls, loc: Path, compression: Optional[Compression] = None):
         assert is_dataclass(cls)
         type_hints: dict[str, type] = get_type_hints(cls)
         kwargs = {}
@@ -427,15 +440,17 @@ class NumpyDataModelContainer:
                 fieldtype = ori_type
 
             if issubclass(fieldtype, (NumpyDataModel, NumpyDataModelContainer)):
-                kwargs[field.name] = fieldtype.load(dir / field.name, compression)
+                kwargs[field.name] = fieldtype.load(loc / field.name, compression)
             else:
                 index_props.append(field)
 
         if len(index_props) > 0:
-            index_filename = get_filepath("index.bin", compression)
+            index_filename = get_filepath(
+                "index.bin", to_serde_compression(compression)
+            )
             n_npmodel = len(kwargs)
 
-            with get_open_fn(index_filename)(dir / index_filename, "rb") as f:
+            with get_open_fn(index_filename)(loc / index_filename, "rb") as f:
                 n_indices = struct.unpack("<I", f.read(4))[0]
                 for i in range(n_indices):
                     size = struct.unpack("<I", f.read(4))[0]
@@ -457,11 +472,9 @@ class NumpyDataModelContainer:
         return cls(**kwargs)
 
     @classmethod
-    def batch_load(
-        cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
-    ):
+    def batch_load(cls, loc: Path, compression: Optional[Compression] = None):
         with BatchFileManager() as filemanager:
-            virdir = VirtualDir(dir, filemanager=filemanager, mode="read")
+            virdir = VirtualDir(loc, filemanager=filemanager, mode="read")
             output = []
             while True:
                 output.append(cls.load(virdir, compression))
@@ -800,19 +813,40 @@ Single2DNumpyArray.init()
 
 def ser_dict_array(
     odict: dict[str, NumpyDataModel],
-    dir: Path,
-    compression: Optional[AVAILABLE_COMPRESSIONS],
+    loc: Path,
+    compression: Optional[Compression],
 ):
     classes = {}
     for key, value in odict.items():
-        value.save(dir / key, compression=compression)
+        value.save(loc / key, compression)
         classes[key] = get_classpath(value.__class__)
-    serde.json.ser(classes, dir / "metadata.json")
+    serde.json.ser(classes, loc / "metadata.json")
 
 
-def deser_dict_array(dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS]):
-    classes = serde.json.deser(dir / "metadata.json")
+def deser_dict_array(loc: Path, compression: Optional[Compression]):
+    classes = serde.json.deser(loc / "metadata.json")
     objects = {}
     for key, cls in classes.items():
-        objects[key] = import_attr(cls).load(dir / key, compression=compression)
+        objects[key] = import_attr(cls).load(loc / key, compression)
     return objects
+
+
+PyArrowCompression = Literal["NONE", "SNAPPY", "GZIP", "BROTLI", "LZ4", "ZSTD"]
+
+
+def to_pyarrow_compression(
+    compression: Optional[Compression],
+) -> PyArrowCompression:
+    if compression is None:
+        return "NONE"
+
+    map: dict[Compression, PyArrowCompression] = {
+        "snappy": "SNAPPY",
+        "gzip": "GZIP",
+        "lz4": "LZ4",
+        "zstd": "ZSTD",
+    }
+    if compression in map:
+        return map[compression]
+
+    raise Exception(f"Not supported compression: {compression}")

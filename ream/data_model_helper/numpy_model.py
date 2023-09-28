@@ -33,6 +33,7 @@ from tqdm import tqdm
 from typing_extensions import Self
 
 from ream.data_model_helper.batch_file_manager import BatchFileManager, VirtualDir
+from ream.data_model_helper.container import DataSerdeMixin
 from ream.data_model_helper.index import Index, OffsetIndex
 from ream.helper import (
     Compression,
@@ -64,7 +65,7 @@ class NumpyDataModelMetadata:
     default_deserdict: Callable[[bytes], dict]
 
 
-class NumpyDataModel:
+class NumpyDataModel(DataSerdeMixin):
     """A data model that is backed by numpy arrays, holding a list of objects of type T.
 
     It can have two types of attributes: numpy arrays and index. For this class to work correctly,
@@ -378,7 +379,7 @@ class NumpyDataModel:
 
 
 @dataclass
-class NumpyDataModelContainer:
+class NumpyDataModelContainer(DataSerdeMixin):
     def save(
         self,
         loc: Path,

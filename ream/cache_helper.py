@@ -37,6 +37,7 @@ from serde.helper import DEFAULT_ORJSON_OPTS, JsonSerde, _orjson_default, orjson
 from timer import Timer
 from typing_extensions import Self
 
+from ream.data_model_helper import DataSerdeMixin
 from ream.fs import FS
 from ream.helper import Compression, ContextContainer, orjson_dumps
 
@@ -127,7 +128,7 @@ class ClsSerdeBackendFactory:
 
     @staticmethod
     def dir(
-        cls: type[SaveLoadDirProtocol] | Sequence[type[SaveLoadDirProtocol]],  # type: ignore
+        cls: type[DataSerdeMixin] | Sequence[type[DataSerdeMixin]],  # type: ignore
         dirname: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
@@ -1195,20 +1196,6 @@ class SerdeProtocol(Protocol):
 
     @classmethod
     def deser(cls, data: bytes) -> Self:
-        ...
-
-
-class SaveLoadDirProtocol(Protocol):
-    def save(
-        self,
-        loc: Path,
-        compression: Optional[Compression] = None,
-        compression_level: Optional[int] = None,
-    ) -> None:
-        ...
-
-    @classmethod
-    def load(cls, loc: Path, compression: Optional[Compression] = None) -> Self:
         ...
 
 

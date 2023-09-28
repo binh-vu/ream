@@ -3,9 +3,6 @@ from __future__ import annotations
 import pickle
 from typing import Generic, TypeVar
 
-from nptyping.ndarray import NDArrayMeta  # type: ignore
-from nptyping.shape_expression import get_dimensions  # type: ignore
-
 T = TypeVar("T")
 
 

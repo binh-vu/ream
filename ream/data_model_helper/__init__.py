@@ -1,6 +1,6 @@
-from ream.data_model_helper.container import DataContainer, DataSerdeMixin
-from ream.data_model_helper.index import Index, OffsetIndex
-from ream.data_model_helper.numpy_model import (
+from ream.data_model_helper._container import DataContainer, DataSerdeMixin
+from ream.data_model_helper._index import Index, OffsetIndex
+from ream.data_model_helper._numpy_model import (
     NumpyDataModel,
     NumpyDataModelContainer,
     NumpyDataModelHelper,
@@ -8,7 +8,7 @@ from ream.data_model_helper.numpy_model import (
     Single2DNumpyArray,
     SingleNumpyArray,
 )
-from ream.data_model_helper.polars_model import (
+from ream.data_model_helper._polars_model import (
     PolarDataModel,
     PolarDataModelMetadata,
     SingleLevelIndexedPLDataFrame,

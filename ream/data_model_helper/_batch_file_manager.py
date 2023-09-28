@@ -7,8 +7,6 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import BinaryIO, Literal, Union
 
 import pyarrow as pa
-from nptyping.ndarray import NDArrayMeta  # type: ignore
-from nptyping.shape_expression import get_dimensions  # type: ignore
 
 
 class BatchFileManager:

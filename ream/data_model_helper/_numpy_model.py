@@ -32,9 +32,9 @@ from serde.helper import get_filepath, get_open_fn
 from tqdm import tqdm
 from typing_extensions import Self
 
-from ream.data_model_helper.batch_file_manager import BatchFileManager, VirtualDir
-from ream.data_model_helper.container import DataSerdeMixin
-from ream.data_model_helper.index import Index, OffsetIndex
+from ream.data_model_helper._batch_file_manager import BatchFileManager, VirtualDir
+from ream.data_model_helper._container import DataSerdeMixin
+from ream.data_model_helper._index import Index, OffsetIndex
 from ream.helper import (
     Compression,
     get_classpath,

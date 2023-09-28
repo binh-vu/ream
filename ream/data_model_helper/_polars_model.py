@@ -20,8 +20,8 @@ import polars as pl
 from polars.type_aliases import ParquetCompression
 from serde.helper import get_filepath, get_open_fn
 
-from ream.data_model_helper.container import DataSerdeMixin
-from ream.data_model_helper.index import Index
+from ream.data_model_helper._container import DataSerdeMixin
+from ream.data_model_helper._index import Index
 from ream.helper import Compression, has_dict_with_nonstr_keys, to_serde_compression
 
 

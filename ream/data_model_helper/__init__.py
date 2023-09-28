@@ -1,6 +1,7 @@
 from ream.data_model_helper._container import DataContainer, DataSerdeMixin
 from ream.data_model_helper._index import Index, OffsetIndex
 from ream.data_model_helper._numpy_model import (
+    ContiguousIndexChecker,
     NumpyDataModel,
     NumpyDataModelContainer,
     NumpyDataModelHelper,

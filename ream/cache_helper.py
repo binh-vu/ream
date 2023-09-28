@@ -155,10 +155,10 @@ class ClsSerdeBackendFactory:
 
     @staticmethod
     def get_serde(
-        klass: type[SaveLoadDirProtocol],
+        klass: type[DataSerdeMixin],
     ):
         def ser(
-            item: SaveLoadDirProtocol,
+            item: DataSerdeMixin,
             dir: Path,
             *args,
         ):
@@ -171,11 +171,11 @@ class ClsSerdeBackendFactory:
 
     @staticmethod
     def get_tuple_serde(
-        classes: Sequence[type[SaveLoadDirProtocol],],
+        classes: Sequence[type[DataSerdeMixin],],
         exts: Optional[list[str]] = None,
     ):
         def ser(
-            items: Sequence[Optional[SaveLoadDirProtocol]],
+            items: Sequence[Optional[DataSerdeMixin]],
             dir: Path,
             *args,
         ):

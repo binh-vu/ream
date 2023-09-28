@@ -20,6 +20,7 @@ import polars as pl
 from polars.type_aliases import ParquetCompression
 from serde.helper import get_filepath, get_open_fn
 
+from ream.data_model_helper.container import DataSerdeMixin
 from ream.data_model_helper.index import Index
 from ream.helper import Compression, has_dict_with_nonstr_keys, to_serde_compression
 
@@ -41,7 +42,7 @@ class PolarDataModelMetadata:
     default_deserdict: Callable[[bytes], dict]
 
 
-class PolarDataModel:
+class PolarDataModel(DataSerdeMixin):
     __slots__ = []
     _metadata: Optional[PolarDataModelMetadata] = None
 
@@ -170,30 +171,6 @@ class PolarDataModel:
         for name in metadata.df_props:
             df = pl.read_parquet(loc / f"{name}.parq")
             kwargs[name] = df
-
-        return cls(**kwargs)
-
-
-@dataclass
-class PolarDataModelContainer:
-    def save(self, dir: Path, compression: Optional[Compression] = None):
-        for field in fields(self):
-            obj = getattr(self, field.name)
-            assert isinstance(obj, (PolarDataModel, PolarDataModelContainer))
-            obj.save(dir / field.name, compression)
-
-    @classmethod
-    def load(cls, dir: Path, compression: Optional[Compression] = None):
-        assert is_dataclass(cls)
-        type_hints: dict[str, type] = get_type_hints(cls)
-        kwargs = {}
-        for field in fields(cls):
-            fieldtype = type_hints[field.name]
-            if (ori_type := get_origin(fieldtype)) is not None:
-                fieldtype = ori_type
-
-            assert issubclass(fieldtype, (PolarDataModel, PolarDataModelContainer))
-            kwargs[field.name] = fieldtype.load(dir / field.name, compression)
 
         return cls(**kwargs)
 

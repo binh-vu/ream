@@ -28,7 +28,7 @@ class DataSerdeMixin(ABC):
 
 
 @dataclass
-class DataContainer:
+class DataContainer(DataSerdeMixin):
     def save(
         self,
         loc: Path,

@@ -21,8 +21,8 @@ class DataSerdeMixin(ABC):
     ) -> None:
         ...
 
-    @abstractmethod
     @classmethod
+    @abstractmethod
     def load(cls, loc: Path, compression: Optional[Compression] = None) -> Self:
         ...
 

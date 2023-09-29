@@ -30,13 +30,13 @@ from typing import (
 )
 
 import orjson
-from hugedict.misc import Chain2, identity
-from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from loguru import logger
 from serde.helper import DEFAULT_ORJSON_OPTS, JsonSerde, _orjson_default, orjson_dumps
 from timer import Timer
 from typing_extensions import Self
 
+from hugedict.misc import Chain2, identity
+from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
 from ream.data_model_helper import DataSerdeMixin
 from ream.fs import FS
 from ream.helper import Compression, ContextContainer, orjson_dumps
@@ -1158,17 +1158,31 @@ class CacheableFn(Generic[T], ABC, Cacheable):
 
     @staticmethod
     def get_cache_key(slf: CacheableFn, args: T) -> bytes:
+        cache_attrs, versions = slf.get_use_args()
+        keyobj = {
+            "args": {attr: getattr(args, attr) for attr in cache_attrs},
+            "versions": versions,
+        }
         return orjson.dumps(
-            {attr: getattr(args, attr) for attr in slf.get_use_args()},
+            keyobj,
             option=orjson.OPT_SORT_KEYS | orjson.OPT_SERIALIZE_DATACLASS,
         )
 
     @lru_cache()
-    def get_use_args(self) -> set[str]:
+    def get_use_args(self) -> tuple[set[str], dict[str, int]]:
         cache_args = set(self.use_args)
+        versions = {}
+        if hasattr(self, "VERSION"):
+            versions[self.__class__.__name__] = getattr(self, "VERSION")
+
         for fn in self.get_dependable_fns():
-            cache_args.update(fn.get_use_args())
-        return cache_args
+            if hasattr(fn, "VERSION"):
+                versions[fn.__class__.__name__] = getattr(fn, "VERSION")
+
+            subargs, subversions = fn.get_use_args()
+            cache_args.update(subargs)
+            versions.update(subversions)
+        return cache_args, versions
 
     @lru_cache()
     def get_dependable_fns(self) -> list[CacheableFn]:

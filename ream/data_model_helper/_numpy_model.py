@@ -808,8 +808,44 @@ class Single2DNumpyArray(NumpyDataModel):
         self.value = value
 
 
+class DictNumpyArray(NumpyDataModel):
+    __slots__ = ["value"]
+
+    value: dict[str, NDArray[Shape["*"], Number]]
+
+    def __init__(self, value: dict[str, NDArray[Shape["*"], Number]]):
+        self.value = value
+
+    def __getitem__(self, item: str) -> NDArray[Shape["*"], Number]:
+        return self.value[item]
+
+    def save(
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ):
+        loc.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.table(self.value),
+            loc / "data.parq",
+            compression=to_pyarrow_compression(compression),
+            compression_level=compression_level,
+        )
+
+    @classmethod
+    def load(cls, loc: Path, compression: Optional[Compression] = None):
+        tbl = pq.read_table(loc / "data.parq")
+        kwargs = {}
+        columns: List[str] = tbl.column_names
+        for name in columns:
+            kwargs[name] = tbl.column(name).to_numpy()
+        return cls(kwargs)
+
+
 SingleNumpyArray.init()
 Single2DNumpyArray.init()
+DictNumpyArray.init()
 
 
 def ser_dict_array(

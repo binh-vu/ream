@@ -2,6 +2,7 @@ from ream.data_model_helper._container import DataContainer, DataSerdeMixin
 from ream.data_model_helper._index import Index, OffsetIndex
 from ream.data_model_helper._numpy_model import (
     ContiguousIndexChecker,
+    DictNumpyArray,
     NumpyDataModel,
     NumpyDataModelContainer,
     NumpyDataModelHelper,
@@ -13,6 +14,7 @@ from ream.data_model_helper._polars_model import (
     PolarDataModel,
     PolarDataModelMetadata,
     SingleLevelIndexedPLDataFrame,
+    SinglePolarDataFrame,
 )
 
 __all__ = [
@@ -24,9 +26,12 @@ __all__ = [
     "NumpyDataModelContainer",
     "NumpyDataModelHelper",
     "NumpyDataModelMetadata",
+    "ContiguousIndexChecker",
     "Single2DNumpyArray",
     "SingleNumpyArray",
+    "DictNumpyArray",
     "PolarDataModel",
     "PolarDataModelMetadata",
     "SingleLevelIndexedPLDataFrame",
+    "SinglePolarDataFrame",
 ]

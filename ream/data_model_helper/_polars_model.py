@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import (
     Any,
     Callable,
+    Iterator,
     Literal,
     Optional,
     Sequence,
@@ -185,8 +186,33 @@ class SingleLevelIndexedPLDataFrame(PolarDataModel):
     index: dict[str, tuple[int, int]]
     value: pl.DataFrame
 
+    def get_df(self, key: str) -> pl.DataFrame:
+        start, end = self.index[key]
+        return self.value.slice(start, end - start)
+
+    def __iter__(self) -> Iterator[pl.DataFrame]:
+        return (
+            self.value.slice(start, end - start) for start, end in self.index.values()
+        )
+
+    def __len__(self) -> int:
+        return len(self.value)
+
 
 SingleLevelIndexedPLDataFrame.init()
+
+
+@dataclass
+class SinglePolarDataFrame(PolarDataModel):
+    __slots__ = ["value"]
+
+    value: pl.DataFrame
+
+    def __len__(self) -> int:
+        return len(self.value)
+
+
+SinglePolarDataFrame.init()
 
 
 def to_polar_compression(

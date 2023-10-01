@@ -8,6 +8,7 @@ from ream.data_model_helper._numpy_model import (
     NumpyDataModelHelper,
     NumpyDataModelMetadata,
     Single2DNumpyArray,
+    SingleLevelIndexedNumpyArray,
     SingleNumpyArray,
 )
 from ream.data_model_helper._polars_model import (
@@ -30,6 +31,7 @@ __all__ = [
     "Single2DNumpyArray",
     "SingleNumpyArray",
     "DictNumpyArray",
+    "SingleLevelIndexedNumpyArray",
     "PolarDataModel",
     "PolarDataModelMetadata",
     "SingleLevelIndexedPLDataFrame",

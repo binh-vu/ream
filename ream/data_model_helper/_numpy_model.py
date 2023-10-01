@@ -808,6 +808,24 @@ class Single2DNumpyArray(NumpyDataModel):
         self.value = value
 
 
+@dataclass
+class SingleLevelIndexedNumpyArray(NumpyDataModel):
+    __slots__ = ["index", "value"]
+
+    index: dict[str, tuple[int, int]]
+    value: NDArray[Shape["*,*"], Number]
+
+    def __init__(
+        self, index: dict[str, tuple[int, int]], value: NDArray[Shape["*,*"], Number]
+    ):
+        self.index = index
+        self.value = value
+
+    def get_array(self, key: str) -> NDArray[Shape["*"], Number]:
+        start, end = self.index[key]
+        return self.value[start:end]
+
+
 class DictNumpyArray(NumpyDataModel):
     __slots__ = ["value"]
 
@@ -843,6 +861,7 @@ class DictNumpyArray(NumpyDataModel):
         return cls(kwargs)
 
 
+SingleLevelIndexedNumpyArray.init()
 SingleNumpyArray.init()
 Single2DNumpyArray.init()
 DictNumpyArray.init()

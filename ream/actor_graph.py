@@ -24,6 +24,7 @@ import yada
 from graph.interface import BaseEdge, BaseNode
 from graph.retworkx.digraph import RetworkXDiGraph
 from loguru import logger
+
 from ream.actors.base import BaseActor
 from ream.actors.interface import Actor
 from ream.helper import _logger_formatter, get_classpath
@@ -273,6 +274,7 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
                 raise ValueError(
                     "Cannot create actor from list of parameter instances because there are duplicated parameter classes (ream.params_helper.NoParams does not count)."
                 )
+            type2arg[NoParams] = NoParams()
             params = [type2arg[param_cls] for param_cls in constructor.params_cls]
         else:
             parser = constructor.get_params_parser()

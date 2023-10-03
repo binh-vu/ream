@@ -3,10 +3,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
-from typing import Optional, Self, get_origin, get_type_hints
+from typing import Optional, get_origin, get_type_hints
 
 import serde.pickle
 from serde.helper import get_filepath
+from typing_extensions import Self
 
 from ream.helper import Compression, to_serde_compression
 

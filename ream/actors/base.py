@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import is_dataclass
-from typing import TYPE_CHECKING, Generic, List, Optional, Protocol, Type, TypeVar
+from typing import TYPE_CHECKING, Generic, Optional, Protocol, Sequence, Type, TypeVar
 
 from loguru import logger
-
 from ream.actor_state import ActorState
 from ream.actors.interface import Actor
 from ream.fs import FS
@@ -29,7 +28,7 @@ class BaseActorProtocol(Protocol[P]):
         ...
 
     @property
-    def dep_actors(self) -> list[BaseActorProtocol]:
+    def dep_actors(self) -> Sequence[BaseActorProtocol]:
         ...
 
 
@@ -46,10 +45,10 @@ class BaseActor(Actor, Generic[P]):
     def __init__(
         self,
         params: P,
-        dep_actors: Optional[List[BaseActor]] = None,
+        dep_actors: Optional[Sequence[BaseActor]] = None,
     ):
         self._working_fs: Optional[FS] = None
-        self.dep_actors: List[BaseActor] = dep_actors or []
+        self.dep_actors: Sequence[BaseActor] = dep_actors or []
         self.params = params
         self.logger = logger.bind(name=self.__class__.__name__)
 

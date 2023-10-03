@@ -11,6 +11,8 @@ import orjson
 import serde.json
 import serde.pickle
 from loguru import logger
+from ream.data_model_helper import DataSerdeMixin
+from ream.helper import Compression, to_serde_compression
 from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
 from typing_extensions import TypeGuard
 
@@ -104,7 +106,7 @@ class DatasetDict(Dict[str, E]):
         return ds
 
 
-class DatasetList(List[E]):
+class DatasetList(List[E], DataSerdeMixin):
     serde: tuple[Callable, Callable, Optional[str]] = (
         serde.pickle.ser,
         serde.pickle.deser,
@@ -120,8 +122,13 @@ class DatasetList(List[E]):
         """Transform dataset from DatasetList[E] to DatasetList[E2]"""
         return DatasetList(self.name, [fn(item) for item in self], self.provenance)
 
-    def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
-        (dir / "metadata.json").write_bytes(
+    def save(
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ) -> None:
+        (loc / "metadata.json").write_bytes(
             orjson.dumps(
                 {
                     "name": self.name,
@@ -133,26 +140,26 @@ class DatasetList(List[E]):
         fileext = self.serde[2]
         if fileext is not None:
             filename = f"data.{fileext}"
-            filepath = get_filepath(dir / filename, compression)
+            filepath = get_filepath(loc / filename, to_serde_compression(compression))
             self.serde[0](list(self), filepath)
         else:
             filename = "data"
-            self.serde[0](list(self), dir / "data", compression)
+            self.serde[0](list(self), loc / "data", to_serde_compression(compression))
 
     @classmethod
-    def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
-        metadata = serde.json.deser(dir / "metadata.json")
+    def load(cls, loc: Path, compression: Optional[Compression] = None):
+        metadata = serde.json.deser(loc / "metadata.json")
         name = metadata["name"]
         provenance = metadata["provenance"]
 
         fileext = cls.serde[2]
         if fileext is not None:
             filename = f"data.{fileext}"
-            filepath = get_filepath(dir / filename, compression)
+            filepath = get_filepath(loc / filename, to_serde_compression(compression))
             lst = cls.serde[1](filepath)
         else:
-            filepath = dir / "data"
-            lst = cls.serde[1](filepath, compression)
+            filepath = loc / "data"
+            lst = cls.serde[1](filepath, to_serde_compression(compression))
 
         return cls(name, lst, provenance)
 

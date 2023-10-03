@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ream2"
-version = "3.3.0"
+version = "3.4.0"
 description = "An actor architecture for research software"
 authors = ["Binh Vu <binh@toan2.com>"]
 license = "MIT"
@@ -14,7 +14,7 @@ python = "^3.9"
 t2-yada = "^1.2.0"
 timer4 = ">= 1.0.4, < 2.0.0"
 loguru = "^0.6.0"
-graph-wrapper = "^1.5.0"
+graph-wrapper = "^1.6.0"
 filelock = "^3.8.0"
 orjson = ">= 3.9.0, < 4.0.0"
 python-slugify = "^6.1.2"
@@ -22,7 +22,7 @@ serde2 = "^1.6.0"
 hugedict = "^2.9.2"
 pyarrow = "^11.0.0"
 nptyping = "^2.5.0"
-
+polars = ">= 0.18.0"
 [tool.poetry.group.dev.dependencies]
 black = "^22.10.0"
 pytest = "^7.1.3"

@@ -6,12 +6,24 @@ import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Tuple, Type, TypeVar, Union, get_args, get_origin
+from typing import (
+    Literal,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+)
 
 import orjson
 from loguru import logger
+from serde.helper import AVAILABLE_COMPRESSIONS
 
 TYPE_ALIASES = {"typing.List": "list", "typing.Dict": "dict", "typing.Set": "set"}
+Compression = Literal["snappy", "gzip", "lz4", "zstd", "bz2"]
 
 
 def get_classpath(type: Type) -> str:
@@ -241,3 +253,19 @@ class ContextContainer:
         # for k, v in self.__dict__.items():
         #     setattr(result, k, deepcopy(v, memo))
         return result
+
+
+def to_serde_compression(
+    compression: Optional[Compression],
+) -> Optional[AVAILABLE_COMPRESSIONS]:
+    if compression is None:
+        return None
+
+    if compression == "gzip":
+        return "gz"
+
+    seq: Sequence[AVAILABLE_COMPRESSIONS] = ["lz4", "bz2"]
+    if compression in seq:
+        return compression
+
+    raise Exception(f"Not supported compression: {compression}")

@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-import os
 import pickle
 import struct
 from copy import deepcopy
 from dataclasses import dataclass, fields, is_dataclass
-from io import BufferedReader, BytesIO
-from pathlib import Path, PosixPath, WindowsPath
+from pathlib import Path
 from typing import (
-    BinaryIO,
     Callable,
-    Generic,
     List,
     Literal,
     Optional,
@@ -32,35 +28,20 @@ from nptyping import NDArray, Shape
 from nptyping.ndarray import NDArrayMeta  # type: ignore
 from nptyping.shape_expression import get_dimensions  # type: ignore
 from nptyping.typing_ import Number
-from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath, get_open_fn
+from serde.helper import get_filepath, get_open_fn
 from tqdm import tqdm
 from typing_extensions import Self
 
-from ream.helper import get_classpath, has_dict_with_nonstr_keys, import_attr
-
-T = TypeVar("T")
-
-
-class Index(Generic[T]):
-    __slots__ = ["index"]
-
-    def __init__(self, index: T):
-        self.index = index
-
-    def to_bytes(self) -> bytes:
-        return pickle.dumps(self)
-
-    @staticmethod
-    def from_bytes(obj):
-        return Index(pickle.loads(obj))
-
-
-class OffsetIndex(Index[T], Generic[T]):
-    __slots__ = ["offset"]
-
-    def __init__(self, index: T, offset: int):
-        super().__init__(index)
-        self.offset = offset
+from ream.data_model_helper._batch_file_manager import BatchFileManager, VirtualDir
+from ream.data_model_helper._container import DataSerdeMixin
+from ream.data_model_helper._index import Index, OffsetIndex
+from ream.helper import (
+    Compression,
+    get_classpath,
+    has_dict_with_nonstr_keys,
+    import_attr,
+    to_serde_compression,
+)
 
 
 @dataclass
@@ -84,7 +65,7 @@ class NumpyDataModelMetadata:
     default_deserdict: Callable[[bytes], dict]
 
 
-class NumpyDataModel:
+class NumpyDataModel(DataSerdeMixin):
     """A data model that is backed by numpy arrays, holding a list of objects of type T.
 
     It can have two types of attributes: numpy arrays and index. For this class to work correctly,
@@ -256,7 +237,12 @@ class NumpyDataModel:
     ):
         getattr(self, field)[i:j] = value
 
-    def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+    def save(
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ):
         """Save the data model to a directory containing 2 files: `data.parq` and `index.bin`.
 
         Note: this function is carefully written so that the two files can be buffered to concatenate
@@ -278,16 +264,19 @@ class NumpyDataModel:
             for i in range(array2d.shape[1]):
                 cols[f"{name}_{i}"] = array2d[:, i]
 
-        dir.mkdir(parents=True, exist_ok=True)
+        loc.mkdir(parents=True, exist_ok=True)
         pq.write_table(
             pa.table(cols),
-            dir / "data.parq",
-            compression=compression or "NONE",
+            loc / "data.parq",
+            compression=to_pyarrow_compression(compression),
+            compression_level=compression_level,
         )
 
         if len(metadata.index_props) > 0:
-            index_filename = get_filepath("index.bin", compression)
-            with get_open_fn(index_filename)(dir / index_filename, "wb") as f:
+            index_filename = get_filepath(
+                "index.bin", to_serde_compression(compression)
+            )
+            with get_open_fn(index_filename)(loc / index_filename, "wb") as f:
                 f.write(struct.pack("<I", len(metadata.index_props)))
                 for i, name in enumerate(metadata.index_props):
                     if metadata.index_prop_idxs[i][1] is not None:
@@ -301,20 +290,21 @@ class NumpyDataModel:
     def batch_save(
         cls,
         batch: Sequence[NumpyDataModel],
-        dir: Path,
-        compression: Optional[AVAILABLE_COMPRESSIONS],
+        loc: Path,
+        compression: Optional[Compression],
+        compression_level: Optional[int] = None,
     ):
         """Save a list of numpy data models into a directory. Different from the save method of numpy data model,
         data of multiple models will be concatenated into a single file.
         """
         with BatchFileManager() as filemanager:
-            virdir = VirtualDir(dir, filemanager=filemanager, mode="write")
+            virdir = VirtualDir(loc, filemanager=filemanager, mode="write")
             for npmodel in batch:
                 npmodel.save(virdir, compression)
                 filemanager.flush()
 
     @classmethod
-    def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+    def load(cls, loc: Path, compression: Optional[Compression] = None):
         metadata = cls._metadata
         if metadata is None:
             raise Exception(
@@ -324,8 +314,10 @@ class NumpyDataModel:
         indices = []
 
         if len(metadata.index_props) > 0:
-            index_filename = get_filepath("index.bin", compression)
-            with get_open_fn(index_filename)(dir / index_filename, "rb") as f:
+            index_filename = get_filepath(
+                "index.bin", to_serde_compression(compression)
+            )
+            with get_open_fn(index_filename)(loc / index_filename, "rb") as f:
                 n_indices = struct.unpack("<I", f.read(4))[0]
                 for i in range(n_indices):
                     size = struct.unpack("<I", f.read(4))[0]
@@ -336,7 +328,7 @@ class NumpyDataModel:
                         index = metadata.default_deserdict(f.read(size))
                     indices.append(index)
 
-        tbl = pq.read_table(dir / "data.parq")
+        tbl = pq.read_table(loc / "data.parq")
         kwargs = {}
         if len(metadata.array2d_props) == 0:
             for name in metadata.array_props:
@@ -374,9 +366,7 @@ class NumpyDataModel:
         return cls(**kwargs)
 
     @classmethod
-    def batch_load(
-        cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
-    ):
+    def batch_load(cls, dir: Path, compression: Optional[Compression] = None):
         with BatchFileManager() as filemanager:
             virdir = VirtualDir(dir, filemanager=filemanager, mode="read")
             output = []
@@ -389,19 +379,26 @@ class NumpyDataModel:
 
 
 @dataclass
-class NumpyDataModelContainer:
-    def save(self, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+class NumpyDataModelContainer(DataSerdeMixin):
+    def save(
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ):
         index_props = []
         for field in fields(self):
             obj = getattr(self, field.name)
             if isinstance(obj, (NumpyDataModel, NumpyDataModelContainer)):
-                obj.save(dir / field.name, compression)
+                obj.save(loc / field.name, compression, compression_level)
             else:
                 index_props.append((field.name, obj))
 
         if len(index_props) > 0:
-            index_filename = get_filepath("index.bin", compression)
-            with get_open_fn(index_filename)(dir / index_filename, "wb") as f:
+            index_filename = get_filepath(
+                "index.bin", to_serde_compression(compression)
+            )
+            with get_open_fn(index_filename)(loc / index_filename, "wb") as f:
                 f.write(struct.pack("<I", len(index_props)))
                 for i, (name, obj) in enumerate(index_props):
                     if isinstance(obj, Index):
@@ -419,20 +416,21 @@ class NumpyDataModelContainer:
     def batch_save(
         cls,
         containers: Sequence[C],
-        dir: Path,
-        compression: Optional[AVAILABLE_COMPRESSIONS] = None,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
     ):
         if len(containers) == 0:
             raise ValueError("containers must not be empty")
 
         with BatchFileManager() as filemanager:
-            virdir = VirtualDir(dir, filemanager=filemanager, mode="write")
+            virdir = VirtualDir(loc, filemanager=filemanager, mode="write")
             for container in containers:
-                container.save(virdir, compression)
+                container.save(virdir, compression, compression_level)
                 filemanager.flush()
 
     @classmethod
-    def load(cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None):
+    def load(cls, loc: Path, compression: Optional[Compression] = None):
         assert is_dataclass(cls)
         type_hints: dict[str, type] = get_type_hints(cls)
         kwargs = {}
@@ -443,15 +441,17 @@ class NumpyDataModelContainer:
                 fieldtype = ori_type
 
             if issubclass(fieldtype, (NumpyDataModel, NumpyDataModelContainer)):
-                kwargs[field.name] = fieldtype.load(dir / field.name, compression)
+                kwargs[field.name] = fieldtype.load(loc / field.name, compression)
             else:
                 index_props.append(field)
 
         if len(index_props) > 0:
-            index_filename = get_filepath("index.bin", compression)
+            index_filename = get_filepath(
+                "index.bin", to_serde_compression(compression)
+            )
             n_npmodel = len(kwargs)
 
-            with get_open_fn(index_filename)(dir / index_filename, "rb") as f:
+            with get_open_fn(index_filename)(loc / index_filename, "rb") as f:
                 n_indices = struct.unpack("<I", f.read(4))[0]
                 for i in range(n_indices):
                     size = struct.unpack("<I", f.read(4))[0]
@@ -473,11 +473,9 @@ class NumpyDataModelContainer:
         return cls(**kwargs)
 
     @classmethod
-    def batch_load(
-        cls, dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS] = None
-    ):
+    def batch_load(cls, loc: Path, compression: Optional[Compression] = None):
         with BatchFileManager() as filemanager:
-            virdir = VirtualDir(dir, filemanager=filemanager, mode="read")
+            virdir = VirtualDir(loc, filemanager=filemanager, mode="read")
             output = []
             while True:
                 output.append(cls.load(virdir, compression))
@@ -507,95 +505,6 @@ class ContiguousIndexChecker:
             )
         self.start = end
         return self
-
-
-class BatchFileManager:
-    def __init__(self):
-        self.open_write_files: dict[str, BinaryIO] = {}
-        self.open_read_files: dict[str, BufferedReader] = {}
-        self.pend_read_files: dict[str, BinaryIO] = {}
-        self.pend_write_files: dict[str, tuple[BytesIO, pa.PythonFile]] = {}
-
-    def create(self, filepath: str):
-        if filepath in self.pend_write_files:
-            raise Exception(
-                "Cannot request the same file twice. This is to prevent data corruption. Finishing writting data to the file and flushing it before requesting it again."
-            )
-        buf = BytesIO()
-        self.pend_write_files[filepath] = (buf, pa.PythonFile(buf))
-        if filepath not in self.open_write_files:
-            self.open_write_files[filepath] = open(filepath, "wb")
-
-        return self.pend_write_files[filepath][1]
-
-    def read(self, filepath: str) -> BinaryIO:
-        if filepath in self.pend_read_files:
-            raise Exception(
-                "Cannot request the same file twice. This is to prevent data corruption. Finishing reading data to the file and flushing it before requesting it again."
-            )
-
-        if filepath not in self.open_read_files:
-            self.open_read_files[filepath] = open(filepath, "rb")
-
-        file = self.open_read_files[filepath]
-        size = struct.unpack("<I", file.read(4))[0]
-        buf = file.read(size)
-
-        self.pend_read_files[filepath] = BytesIO(buf)
-        return self.pend_read_files[filepath]
-
-    def __enter__(self):
-        assert len(self.open_write_files) == 0 and len(self.open_read_files) == 0
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.flush()
-        for file in self.open_write_files.values():
-            file.close()
-        for file in self.open_read_files.values():
-            file.close()
-        self.open_read_files.clear()
-        self.open_write_files.clear()
-
-    def flush(self):
-        for filepath, (buf, file) in self.pend_write_files.items():
-            file = self.open_write_files[filepath]
-            buf = buf.getbuffer()
-            file.write(struct.pack("<I", buf.nbytes))
-            file.write(buf)
-
-        self.pend_write_files.clear()
-        self.pend_read_files.clear()
-
-    def is_all_read_done(self) -> bool:
-        return all(len(file.peek(1)) == 0 for file in self.open_read_files.values())
-
-
-class VirtualDir(Path):
-    __slots__ = ("filemanager", "mode")
-
-    _flavour = getattr(WindowsPath if os.name == "nt" else PosixPath, "_flavour")
-    filemanager: BatchFileManager
-    mode: Literal["read", "write"]
-
-    def __new__(cls, *args, **kwargs):
-        object = Path.__new__(cls, *args, **kwargs)
-        object.filemanager = kwargs["filemanager"]
-        object.mode = kwargs["mode"]
-        return object
-
-    def __truediv__(self, key: str) -> Union[pa.PythonFile, VirtualDir]:
-        key = str(key)
-        if key.find(".") == -1:
-            return VirtualDir(
-                str(self), key, filemanager=self.filemanager, mode=self.mode
-            )
-
-        filepath = str(super().__truediv__(key))
-        if self.mode == "write":
-            return self.filemanager.create(filepath)
-        else:
-            return self.filemanager.read(filepath)
 
 
 class NumpyDataModelHelper:
@@ -899,36 +808,101 @@ class Single2DNumpyArray(NumpyDataModel):
         self.value = value
 
 
+@dataclass
+class SingleLevelIndexedNumpyArray(NumpyDataModel):
+    __slots__ = ["index", "value"]
+
+    index: dict[str, tuple[int, int]]
+    value: NDArray[Shape["*,*"], Number]
+
+    def __init__(
+        self, index: dict[str, tuple[int, int]], value: NDArray[Shape["*,*"], Number]
+    ):
+        self.index = index
+        self.value = value
+
+    def get_array(self, key: str) -> NDArray[Shape["*"], Number]:
+        start, end = self.index[key]
+        return self.value[start:end]
+
+
+class DictNumpyArray(NumpyDataModel):
+    __slots__ = ["value"]
+
+    value: dict[str, NDArray[Shape["*"], Number]]
+
+    def __init__(self, value: dict[str, NDArray[Shape["*"], Number]]):
+        self.value = value
+
+    def __getitem__(self, item: str) -> NDArray[Shape["*"], Number]:
+        return self.value[item]
+
+    def save(
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ):
+        loc.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.table(self.value),
+            loc / "data.parq",
+            compression=to_pyarrow_compression(compression),
+            compression_level=compression_level,
+        )
+
+    @classmethod
+    def load(cls, loc: Path, compression: Optional[Compression] = None):
+        tbl = pq.read_table(loc / "data.parq")
+        kwargs = {}
+        columns: List[str] = tbl.column_names
+        for name in columns:
+            kwargs[name] = tbl.column(name).to_numpy()
+        return cls(kwargs)
+
+
+SingleLevelIndexedNumpyArray.init()
 SingleNumpyArray.init()
 Single2DNumpyArray.init()
+DictNumpyArray.init()
 
 
 def ser_dict_array(
     odict: dict[str, NumpyDataModel],
-    dir: Path,
-    compression: Optional[AVAILABLE_COMPRESSIONS],
+    loc: Path,
+    compression: Optional[Compression],
 ):
     classes = {}
     for key, value in odict.items():
-        value.save(dir / key, compression=compression)
+        value.save(loc / key, compression)
         classes[key] = get_classpath(value.__class__)
-    serde.json.ser(classes, dir / "metadata.json")
+    serde.json.ser(classes, loc / "metadata.json")
 
 
-def deser_dict_array(dir: Path, compression: Optional[AVAILABLE_COMPRESSIONS]):
-    classes = serde.json.deser(dir / "metadata.json")
+def deser_dict_array(loc: Path, compression: Optional[Compression]):
+    classes = serde.json.deser(loc / "metadata.json")
     objects = {}
     for key, cls in classes.items():
-        objects[key] = import_attr(cls).load(dir / key, compression=compression)
+        objects[key] = import_attr(cls).load(loc / key, compression)
     return objects
 
 
-# dir = VirtualDir("/tmp", filetrack=FileTrack())
-# print(dir.name2file, dir.filetrack)
-# dir / "test.h5"
-# print(dir.name2file, dir.filetrack)
-# subdir = dir / "abc"
-# print(dir.name2file, dir.filetrack)
-# print(type(subdir))
-# print(subdir.name2file, subdir.filetrack)
-# # print((VirtualDir("/tmp") / "test.h5").name2file)
+PyArrowCompression = Literal["NONE", "SNAPPY", "GZIP", "BROTLI", "LZ4", "ZSTD"]
+
+
+def to_pyarrow_compression(
+    compression: Optional[Compression],
+) -> PyArrowCompression:
+    if compression is None:
+        return "NONE"
+
+    map: dict[Compression, PyArrowCompression] = {
+        "snappy": "SNAPPY",
+        "gzip": "GZIP",
+        "lz4": "LZ4",
+        "zstd": "ZSTD",
+    }
+    if compression in map:
+        return map[compression]
+
+    raise Exception(f"Not supported compression: {compression}")

@@ -28,10 +28,6 @@ from nptyping import NDArray, Shape
 from nptyping.ndarray import NDArrayMeta  # type: ignore
 from nptyping.shape_expression import get_dimensions  # type: ignore
 from nptyping.typing_ import Number
-from serde.helper import get_filepath, get_open_fn
-from tqdm import tqdm
-from typing_extensions import Self
-
 from ream.data_model_helper._batch_file_manager import BatchFileManager, VirtualDir
 from ream.data_model_helper._container import DataSerdeMixin
 from ream.data_model_helper._index import Index, OffsetIndex
@@ -42,6 +38,9 @@ from ream.helper import (
     import_attr,
     to_serde_compression,
 )
+from serde.helper import get_filepath, get_open_fn
+from tqdm import tqdm
+from typing_extensions import Self
 
 
 @dataclass
@@ -517,13 +516,12 @@ class NumpyDataModelHelper:
 
     @classmethod
     def create_simple_index(
-        cls, names: list[str], npmodels: list[NumpyDataModel]
+        cls, names: Sequence[str], sizes: Sequence[int]
     ) -> dict[str, tuple[int, int]]:
         """Create a simple index that map each name to the index range of the corresponding numpy data model"""
         index = {}
         offset = 0
-        for name, npmodel in zip(names, npmodels):
-            size = len(npmodel)
+        for name, size in zip(names, sizes):
             index[name] = (offset, offset + size)
             offset += size
         return index

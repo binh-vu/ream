@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 from copy import deepcopy
+from dataclasses import Field, asdict, dataclass, field, fields, is_dataclass, replace
 from functools import partial
-from dataclasses import Field, asdict, dataclass, fields, is_dataclass, replace
-from typing import Any, Dict, List, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union
+
+import orjson
 
 DataClassInstance = Any
 
@@ -16,7 +19,7 @@ class NoParams:
 
 @dataclass
 class EnumParams:
-    """For specify different method and its parameters.
+    """For specifying different method and its parameters.
 
     ## Example:
 
@@ -54,7 +57,10 @@ class EnumParams:
             setattr(other, getattr(self, field.name), None)
         return other
 
-    def get_method_class(self, method_field: Field) -> Type:
+    def get_method_class(self, method_field: Optional[Field] = None) -> Type:
+        if method_field is None:
+            assert len(self.get_method_fields()) == 1
+            method_field = self.get_method_fields()[0]
         method = getattr(self, method_field.name)
         return method_field.metadata["variants"][method]
 
@@ -69,7 +75,12 @@ class EnumParams:
             )
         return partial(self.get_method_class(method_field), **kwargs)
 
-    def get_method_params(self, method_field: Field) -> DataClassInstance:
+    def get_method_params(
+        self, method_field: Optional[Field] = None
+    ) -> DataClassInstance:
+        if method_field is None:
+            assert len(self.get_method_fields()) == 1
+            method_field = self.get_method_fields()[0]
         method = getattr(self, method_field.name)
         return getattr(self, method)
 
@@ -87,6 +98,14 @@ class EnumParams:
 
             self.__method_fields = method_fields
         return self.__method_fields
+
+
+@dataclass
+class PluginParams:
+    """For specifying a class method from string"""
+
+    clspath: str
+    clsargs: dict = field(default_factory=dict, metadata={"parser": orjson.loads})
 
 
 def are_valid_parameters(

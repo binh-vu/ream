@@ -10,7 +10,7 @@ from ream.params_helper import EnumParams
 
 class EnumInterface(ABC):
     @abstractmethod
-    def exec(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs):
         pass
 
     def get_provenance(self) -> str:
@@ -43,4 +43,4 @@ class EnumActor(Generic[EP, EI], BaseActor[EP]):
         return self.method.get_provenance()
 
     def exec(self, *args, **kwargs):
-        return self.method.exec(*args, **kwargs)
+        return self.method.__call__(*args, **kwargs)

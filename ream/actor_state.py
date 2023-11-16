@@ -1,16 +1,11 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import (
-    Any,
-    Dict,
-    List,
-    Optional,
-    Type,
-    Union,
-)
+from typing import Any, Dict, List, Optional, Type, Union
+
 from ream.actor_version import ActorVersion
-from ream.params_helper import DataClassInstance, param_as_dict
 from ream.helper import get_classpath
+from ream.params_helper import DataClassInstance, param_as_dict
 
 
 @dataclass
@@ -58,6 +53,8 @@ class ActorState:
             params = [param_as_dict(p) for p in self.params]
         elif isinstance(self.params, dict):
             params = {k: param_as_dict(v) for k, v in self.params.items()}
+        elif hasattr(self.params, "to_dict"):
+            params = self.params.to_dict()
         else:
             params = param_as_dict(self.params)
 

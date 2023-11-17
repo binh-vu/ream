@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from typing import Generator, Generic, Optional
+from typing import Generator, Generic, Optional, Sequence
 
 from ream.actors.base import BaseActor, P
 from ream.dataset_helper import DatasetList, E
@@ -11,7 +11,7 @@ from ream.dataset_helper import DatasetList, E
 class IDDSActor(ABC, Generic[E, P], BaseActor[P]):
     """A actor that is responsible for querying the dataset."""
 
-    def __init__(self, params: P, dep_actor: Optional[list[BaseActor]] = None):
+    def __init__(self, params: P, dep_actor: Optional[Sequence[BaseActor]] = None):
         super().__init__(params, dep_actor)
         self.store = {}
 

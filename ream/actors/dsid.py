@@ -25,18 +25,22 @@ class IDDSActor(ABC, Generic[E, P], BaseActor[P]):
         raise NotImplementedError()
 
     @contextmanager
-    def use_example(self, id: str, example: E) -> Generator[str, None, None]:
+    def use_example(
+        self, id: str, example: E, prefix: str = "ex:"
+    ) -> Generator[str, None, None]:
         """Temporary add examples to the store, so other actors can use it via querying"""
-        key = f"ex:{id}"
+        key = prefix + id
         assert key not in self.store
         self.store[key] = [example]
         yield key
         del self.store[key]
 
     @contextmanager
-    def use_examples(self, id: str, examples: list[E]) -> Generator[str, None, None]:
+    def use_examples(
+        self, id: str, examples: list[E], prefix: str = "exs:"
+    ) -> Generator[str, None, None]:
         """Temporary add examples to the store, so other actors can use it via querying"""
-        key = f"exs:{id}"
+        key = prefix + id
         assert key not in self.store
         self.store[key] = examples
         yield key

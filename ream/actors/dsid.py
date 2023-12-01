@@ -13,11 +13,11 @@ class IDDSActor(ABC, Generic[E, P], BaseActor[P]):
 
     def __init__(self, params: P, dep_actor: Optional[Sequence[BaseActor]] = None):
         super().__init__(params, dep_actor)
-        self.store = {}
+        self.store: dict[str, list[E]] = {}
 
     def __call__(self, dsquery: str) -> DatasetList[E]:
         if dsquery in self.store:
-            return DatasetList(dsquery, [self.store[dsquery]])
+            return DatasetList(dsquery, self.store[dsquery])
         return self.load_dataset(dsquery)
 
     @abstractmethod
@@ -26,9 +26,18 @@ class IDDSActor(ABC, Generic[E, P], BaseActor[P]):
 
     @contextmanager
     def use_example(self, id: str, example: E) -> Generator[str, None, None]:
-        """Temporary add an example to the store, so other actors can use it via querying"""
+        """Temporary add examples to the store, so other actors can use it via querying"""
         key = f"ex:{id}"
         assert key not in self.store
-        self.store[key] = example
+        self.store[key] = [example]
+        yield key
+        del self.store[key]
+
+    @contextmanager
+    def use_examples(self, id: str, examples: list[E]) -> Generator[str, None, None]:
+        """Temporary add examples to the store, so other actors can use it via querying"""
+        key = f"exs:{id}"
+        assert key not in self.store
+        self.store[key] = examples
         yield key
         del self.store[key]

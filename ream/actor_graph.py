@@ -24,6 +24,7 @@ import yada
 from graph.interface import BaseEdge, BaseNode
 from graph.retworkx.digraph import RetworkXDiGraph
 from loguru import logger
+
 from ream.actors.base import BaseActor
 from ream.actors.interface import Actor
 from ream.helper import _logger_formatter, get_classpath

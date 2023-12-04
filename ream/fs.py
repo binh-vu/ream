@@ -1,14 +1,19 @@
 from __future__ import annotations
-from contextlib import contextmanager
+
+import enum
 import os
-import sqlite3, enum, shutil
+import shutil
+import sqlite3
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Optional, Union
+
+from filelock import FileLock
 from loguru import logger
 from slugify import slugify
-from dataclasses import dataclass
+
 from ream.helper import orjson_dumps
-from filelock import FileLock
 
 
 class FS:
@@ -167,6 +172,13 @@ class FSPath:
         if self.status() == ItemStatus.Success:
             return self.fs.root / self._realdiskpath
         raise FileNotFoundError(f"File {self.relpath} does not exist")
+
+    def get_or_create(self) -> Path:
+        if self.exists():
+            return self.get()
+        path = self.reserve()
+        self.update_status(ItemStatus.Success)
+        return path
 
     @contextmanager
     def reserve_and_track(self) -> Generator[Path, None, None]:

@@ -32,8 +32,10 @@ class IDDSActor(ABC, Generic[E, P], BaseActor[P]):
         key = prefix + id
         assert key not in self.store
         self.store[key] = [example]
-        yield key
-        del self.store[key]
+        try:
+            yield key
+        finally:
+            del self.store[key]
 
     @contextmanager
     def use_examples(
@@ -43,5 +45,7 @@ class IDDSActor(ABC, Generic[E, P], BaseActor[P]):
         key = prefix + id
         assert key not in self.store
         self.store[key] = examples
-        yield key
-        del self.store[key]
+        try:
+            yield key
+        finally:
+            del self.store[key]

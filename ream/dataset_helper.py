@@ -236,6 +236,11 @@ class DatasetQuery:
         - <dataset>[<start>:<end>](:shuffle)?(:seed)?
         - <dataset>[number(,number)*](:shuffle)?(:seed)?
         - <dataset>:<subset>
+
+        Examples:
+        - wt250:train[0:100]+dev[0:100]+test[0:100]
+        - wt250[0:100]
+        - wt250[0:100]:shuffle
         """
         m = re.match(
             r"^(?P<ds>[^:\[]+):?(?P<query>(?:[^\[]*\[?[^\]]+\]?\+?)*)(?P<shuffle>:shuffle)?(?P<seed>:\d+)?$",

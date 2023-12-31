@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Tuple, TypedDict, TypeVar
 
@@ -11,10 +11,11 @@ import orjson
 import serde.json
 import serde.pickle
 from loguru import logger
-from ream.data_model_helper import DataSerdeMixin
-from ream.helper import Compression, to_serde_compression
 from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
 from typing_extensions import TypeGuard
+
+from ream.data_model_helper import DataSerdeMixin
+from ream.helper import Compression, to_serde_compression
 
 
 class RawSlice(TypedDict):
@@ -227,40 +228,48 @@ class DatasetQuery:
     ]
     shuffle: bool  # the shuffle is done before splitting
     seed: Optional[int]
+    postprocessing: list[str] = field(default_factory=list)
 
     @staticmethod
     @functools.lru_cache(maxsize=1024)
     def from_string(query: str) -> DatasetQuery:
         """Query format:
-        - <dataset>:(<subset>[<start>:<end>]+)*(:shuffle)?(:seed)?
-        - <dataset>[<start>:<end>](:shuffle)?(:seed)?
-        - <dataset>[number(,number)*](:shuffle)?(:seed)?
+        - <dataset>:(<subset>[<start>:<end>]+)*(:shuffle([<seed>])?)(:<postprocessing>)?
+        - <dataset>[<start>:<end>](:shuffle([<seed>])?)(:<postprocessing>)?
+        - <dataset>[number(,number)*](:shuffle([<seed>])?)(:<postprocessing>)?
         - <dataset>:<subset>
 
         Examples:
-        - wt250:train[0:100]+dev[0:100]+test[0:100]
-        - wt250[0:100]
-        - wt250[0:100]:shuffle
+        - wt250[:100], wt250[train[0:100], dev[0:100], test[0:100]], wt250{shuffle[42], no-unk-col}
         """
         m = re.match(
-            r"^(?P<ds>[^:\[]+):?(?P<query>(?:[^\[]*\[?[^\]]+\]?\+?)*)(?P<shuffle>:shuffle)?(?P<seed>:\d+)?$",
+            r"".join(
+                [
+                    r"^",
+                    r"(?P<ds>[^:\[{]+)",
+                    r"(\[(?P<select>[^{]+)\])?",
+                    r"({(?P<process>[^}]+)})?",
+                    r"$",
+                ]
+            ),
             query,
         )
         if m is None:
             raise ValueError(f"Invalid dataset query: {query}")
 
         dataset = m.group("ds")
-        splitquery = m.group("query")
-        shuffle = m.group("shuffle") is not None
-        seed = int(m.group("seed")[1:]) if m.group("seed") is not None else None
+        select = m.group("select")
+        process = m.group("process")
 
         subsets: dict[
             str, AbsoluteRangeSelection | PercentageRangeSelection | IndexSelection
         ] = {}
-        if splitquery != "":
-            for subset in splitquery.split("+"):
+        if select is not None:
+            for subset in select.split(","):
+                subset = subset.strip()
                 m = re.match(
-                    r"^(?P<sname>[^\[]*)\[(?P<start>\d+\%?)?:(?P<end>\d+\%?)?\]", subset
+                    r"^(?P<sname>[^\[]*)\[?(?P<start>\d+\%?)?:(?P<end>\d+\%?)?\]?$",
+                    subset,
                 )
                 if m is not None:
                     grpstart = m.group("start")
@@ -300,7 +309,8 @@ class DatasetQuery:
                         subsets[m.group("sname")] = AbsoluteRangeSelection(start, end)
                 else:
                     m = re.match(
-                        r"^(?P<sname>[^\[]*)\[(?P<index>\d+(?:,\d+)*)\]", subset
+                        r"^(?P<sname>[^\[]*)\[(?P<index>\d+(?:,\d+)*)\]$",
+                        subset,
                     )
                     if m is not None:
                         subsets[m.group("sname")] = IndexSelection(
@@ -310,13 +320,28 @@ class DatasetQuery:
                         m = re.match(r"^(?P<sname>[a-zA-Z]+)$", subset)
                         assert (
                             m is not None
-                        ), f"Invalid subset spec: `{subset}` in `{splitquery}` in `{query}`"
+                        ), f"Invalid subset spec: `{subset}` in `{select}` in `{query}`"
                         subsets[m.group("sname")] = PercentageRangeSelection(0, 100)
         else:
-            subsets: dict[
-                str, AbsoluteRangeSelection | PercentageRangeSelection | IndexSelection
-            ] = {"": PercentageRangeSelection(0, 100)}
-        return DatasetQuery(dataset, subsets, shuffle, seed)
+            subsets[""] = PercentageRangeSelection(0, 100)
+
+        shuffle = False
+        seed = None
+        postprocessing: list[str] = []
+
+        if process is not None:
+            for pp in process.split(","):
+                pp = pp.strip()
+                if pp.startswith("shuffle"):
+                    m = re.match(r"shuffle(\((?P<seed>\d+)\))?$", pp)
+                    assert m is not None, f"Invalid shuffle spec: `{pp}` in `{query}`"
+                    shuffle = True
+                    if m.group("seed") is not None:
+                        seed = int(m.group("seed"))
+                else:
+                    postprocessing.append(pp)
+
+        return DatasetQuery(dataset, subsets, shuffle, seed, postprocessing)
 
     def select(self, array: list[E]) -> DatasetDict[list[E]]:
         n_exs = len(array)
@@ -377,7 +402,7 @@ class DatasetQuery:
         return DatasetList(self.dataset, self.select(array)[""])
 
     def strip(self) -> DatasetQuery:
-        """Remove the subset name from the query. Error when there are multiple subsets."""
+        """Remove the subset name from the select. Error when there are multiple subsets."""
         if len(self.subsets) > 1:
             raise ValueError(
                 f"Cannot strip subsets from query when there are multiple subsets: {self.subsets}"

@@ -36,7 +36,7 @@ from timer import Timer
 from typing_extensions import Self
 
 from hugedict.misc import Chain2, identity
-from hugedict.sqlitedict import SqliteDict, SqliteDictFieldType
+from hugedict.sqlite import SqliteDict, SqliteDictFieldType
 from ream.data_model_helper import DataSerdeMixin
 from ream.fs import FS
 from ream.helper import Compression, ContextContainer, orjson_dumps

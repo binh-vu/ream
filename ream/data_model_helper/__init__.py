@@ -10,6 +10,8 @@ from ream.data_model_helper._numpy_model import (
     Single2DNumpyArray,
     SingleLevelIndexedNumpyArray,
     SingleNumpyArray,
+    deser_dict_array,
+    ser_dict_array,
 )
 from ream.data_model_helper._polars_model import (
     PolarDataModel,
@@ -17,6 +19,7 @@ from ream.data_model_helper._polars_model import (
     SingleLevelIndexedPLDataFrame,
     SinglePolarDataFrame,
 )
+from ream.data_model_helper._raw_model import DictList
 
 __all__ = [
     "DataContainer",
@@ -36,4 +39,7 @@ __all__ = [
     "PolarDataModelMetadata",
     "SingleLevelIndexedPLDataFrame",
     "SinglePolarDataFrame",
+    "DictList",
+    "ser_dict_array",
+    "deser_dict_array",
 ]

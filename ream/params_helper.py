@@ -128,7 +128,9 @@ def are_valid_parameters(
 def param_as_dict(param: DataClassInstance) -> dict:
     """Convert a dataclass to a dictionary"""
     if not is_dataclass(param):
-        raise TypeError("Parameter must be an instance of a dataclass")
+        raise TypeError(
+            f"Parameter must be an instance of a dataclass. Get: {type(param)}"
+        )
     return _param_as_dict_inner(param, dict_factory=dict)  # type: ignore
 
 

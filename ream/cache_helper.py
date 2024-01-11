@@ -30,16 +30,15 @@ from typing import (
 )
 
 import orjson
-from loguru import logger
-from serde.helper import DEFAULT_ORJSON_OPTS, JsonSerde, _orjson_default, orjson_dumps
-from timer import Timer
-from typing_extensions import Self
-
 from hugedict.misc import Chain2, identity
 from hugedict.sqlite import SqliteDict, SqliteDictFieldType
+from loguru import logger
 from ream.data_model_helper import DataSerdeMixin
 from ream.fs import FS
 from ream.helper import Compression, ContextContainer, orjson_dumps
+from serde.helper import DEFAULT_ORJSON_OPTS, JsonSerde, _orjson_default, orjson_dumps
+from timer import Timer
+from typing_extensions import Self
 
 try:
     import lz4.frame as lz4_frame  # type: ignore
@@ -413,7 +412,11 @@ class Cache:
             seq_arg_name = None
             seq_arg_index = 0
             for i, (name, argtype) in enumerate(cache_args_helper.argtypes.items()):
-                if argtype is not None and issubclass(get_origin(argtype), Sequence):
+                if (
+                    argtype is not None
+                    and (origin_argtype := get_origin(argtype)) is not None
+                    and issubclass(origin_argtype, Sequence)
+                ):
                     assert seq_arg_name is None
                     assert (
                         len(get_args(argtype)) == 1

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Optional, Union
+from zipfile import ZipFile
 
 import orjson
 import serde.pickle
@@ -112,6 +113,17 @@ class FS:
                 self.root,
             )
             yield
+
+    def export_fs(self, outfile: Path):
+        """Export the following FS"""
+        with ZipFile(outfile, "w") as f:
+            f.writestr("fs.db", self.export_db())
+            for dirpath, dirnames, filenames in os.walk(str(self.root)):
+                rel_dirpath = Path(dirpath).relative_to(self.root)
+
+            for file in self.root.iterdir():
+                if file.is_dir():
+                    f.mkdir()
 
     def export_db(self):
         return pickle.dumps(

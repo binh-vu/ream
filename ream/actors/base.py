@@ -102,12 +102,13 @@ class BaseActor(Actor, Generic[P]):
 
     def export_working_fs(self, outfile: Path):
         """Export the files in the working directory."""
+        fs = self.get_working_fs()
         with ZipFile(outfile, "w") as f:
             f.writestr("fs.db", self.get_working_fs().export_db())
 
-    def is_state_contains_diskpath(self) -> bool:
-        """Check if the actor state contains the diskpath"""
-        return True
+    def find_diskpaths_in_state(self) -> list[str]:
+        """Find list of potential disk paths in the actor state"""
+        return []
 
     @classmethod
     def get_param_cls(cls) -> Type[P]:

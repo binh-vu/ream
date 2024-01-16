@@ -15,9 +15,8 @@ import orjson
 import serde.pickle
 from filelock import FileLock
 from loguru import logger
-from slugify import slugify
-
 from ream.helper import orjson_dumps
+from slugify import slugify
 
 
 class FS:
@@ -118,17 +117,27 @@ class FS:
         """Export the following FS"""
         with ZipFile(outfile, "w") as f:
             f.writestr("fs.db", self.export_db())
-            f.writestr("_metadata", metadata)
-            for dirpath, dirnames, filenames in os.walk(str(self.root)):
-                rel_dirpath = Path(dirpath).relative_to(self.root)
-                f.mkdir(str(rel_dirpath))
-                for filename in filenames:
-                    if filename == "_LOCK":
-                        continue
-                    f.writestr(
-                        str(rel_dirpath / filename),
-                        (Path(dirpath) / filename).read_bytes(),
-                    )
+            f.writestr("_METADATA", metadata)
+
+            for file in self.root.iterdir():
+                if file.is_dir():
+                    f.mkdir(str(file.relative_to(self.root)))
+                    for dirpath, dirnames, filenames in os.walk(str(file)):
+                        rel_dirpath = Path(dirpath).relative_to(self.root)
+                        f.mkdir(str(rel_dirpath))
+                        for filename in filenames:
+                            if filename == "_LOCK":
+                                continue
+                            f.writestr(
+                                str(rel_dirpath / filename),
+                                (Path(dirpath) / filename).read_bytes(),
+                            )
+                    continue
+
+                if file.name == "fs.db":
+                    continue
+
+                f.writestr(str(file.relative_to(self.root)), file.read_bytes())
 
     @staticmethod
     def read_fs_export_metadata(infile: Path):
@@ -342,4 +351,5 @@ class FSPath:
                         f.unlink()
             return self.fs.root / self._realdiskpath
 
+        raise Exception("Unreachable!")
         raise Exception("Unreachable!")

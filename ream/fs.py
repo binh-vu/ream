@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import enum
 import os
+import pickle
 import shutil
 import sqlite3
 from contextlib import contextmanager
@@ -9,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Optional, Union
 
+import orjson
+import serde.pickle
 from filelock import FileLock
 from loguru import logger
 from slugify import slugify
@@ -109,6 +112,19 @@ class FS:
                 self.root,
             )
             yield
+
+    def export_db(self):
+        return pickle.dumps(
+            self.db.execute("SELECT path, diskpath, success, key FROM files").fetchall()
+        )
+
+    def import_db(self, data: bytes):
+        records = pickle.loads(data)
+        with self.db:
+            self.db.executemany(
+                "INSERT INTO files (path, diskpath, success, key) VALUES (?, ?, ?, ?)",
+                records,
+            )
 
 
 class ItemStatus(int, enum.Enum):

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import is_dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Generic, Optional, Protocol, Sequence, Type, TypeVar
+from zipfile import ZipFile
 
 from loguru import logger
+
 from ream.actor_state import ActorState
 from ream.actors.interface import Actor
 from ream.fs import FS
@@ -96,6 +99,15 @@ class BaseActor(Actor, Generic[P]):
             )
             self._working_fs = FS(cache_dir)
         return self._working_fs
+
+    def export_working_fs(self, outfile: Path):
+        """Export the files in the working directory."""
+        with ZipFile(outfile, "w") as f:
+            f.writestr("fs.db", self.get_working_fs().export_db())
+
+    def is_state_contains_diskpath(self) -> bool:
+        """Check if the actor state contains the diskpath"""
+        return True
 
     @classmethod
     def get_param_cls(cls) -> Type[P]:

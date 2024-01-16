@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import is_dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Generic, Optional, Protocol, Sequence, Type, TypeVar
 from zipfile import ZipFile
 
+import serde.json
 from loguru import logger
 
 from ream.actor_state import ActorState
@@ -55,6 +57,7 @@ class BaseActor(Actor, Generic[P]):
         self.params = params
         self.logger = logger.bind(name=self.__class__.__name__)
 
+    @lru_cache(maxsize=None)
     def get_actor_state(self) -> ActorState:
         """Get the state of this actor"""
         deps = [actor.get_actor_state() for actor in self.dep_actors]
@@ -102,9 +105,9 @@ class BaseActor(Actor, Generic[P]):
 
     def export_working_fs(self, outfile: Path):
         """Export the files in the working directory."""
-        fs = self.get_working_fs()
-        with ZipFile(outfile, "w") as f:
-            f.writestr("fs.db", self.get_working_fs().export_db())
+        ReamWorkspace.get_instance().export_working_dir(
+            self.get_working_fs().root, outfile
+        )
 
     def find_diskpaths_in_state(self) -> list[str]:
         """Find list of potential disk paths in the actor state"""

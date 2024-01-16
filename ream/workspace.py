@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Union
 
+import orjson
 from slugify import slugify
 
 from ream.actor_state import ActorState
@@ -68,3 +69,11 @@ class ReamWorkspace:
                 version.assert_equal(ActorVersion.load(version_file))
 
         return realpath
+
+    def export_working_dir(self, workdir: Path, outfile: Path) -> Path:
+        assert workdir.is_relative_to(self.workdir)
+        metadata = orjson.dumps(self.fs.get_record(workdir))
+        FS(workdir).export_fs(outfile, metadata=metadata)
+
+    def import_working_dir(self, infile: Path):
+        raise NotImplementedError()

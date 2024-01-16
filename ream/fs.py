@@ -114,16 +114,30 @@ class FS:
             )
             yield
 
-    def export_fs(self, outfile: Path):
+    def export_fs(self, outfile: Path, metadata: bytes):
         """Export the following FS"""
         with ZipFile(outfile, "w") as f:
             f.writestr("fs.db", self.export_db())
+            f.writestr("_metadata", metadata)
             for dirpath, dirnames, filenames in os.walk(str(self.root)):
                 rel_dirpath = Path(dirpath).relative_to(self.root)
+                f.mkdir(str(rel_dirpath))
+                for filename in filenames:
+                    if filename == "_LOCK":
+                        continue
+                    f.writestr(
+                        str(rel_dirpath / filename),
+                        (Path(dirpath) / filename).read_bytes(),
+                    )
 
-            for file in self.root.iterdir():
-                if file.is_dir():
-                    f.mkdir()
+    @staticmethod
+    def read_fs_export_metadata(infile: Path):
+        pass
+
+    @staticmethod
+    def import_fs(infile: Path):
+        with ZipFile(infile, "r") as f:
+            f.read("fs.db")
 
     def export_db(self):
         return pickle.dumps(
@@ -137,6 +151,23 @@ class FS:
                 "INSERT INTO files (path, diskpath, success, key) VALUES (?, ?, ?, ?)",
                 records,
             )
+
+    def get_record(self, disk_path: Path):
+        if disk_path.is_absolute():
+            assert disk_path.is_relative_to(self.root)
+            disk_path = disk_path.relative_to(self.root)
+
+        lst = self.db.execute(
+            "SELECT path, diskpath, success, key FROM files WHERE diskpath = ?",
+            (str(disk_path),),
+        ).fetchall()
+        assert len(lst) == 1
+        return {
+            "path": lst[0][0],
+            "diskpath": lst[0][1],
+            "success": lst[0][2],
+            "key": lst[0][3].decode(),
+        }
 
 
 class ItemStatus(int, enum.Enum):

@@ -49,6 +49,14 @@ class ActorState:
 
     def to_dict(self) -> dict:
         """Return the state in dictionary form, mainly used for comparing the state"""
+        return {
+            "classpath": self.classpath,
+            "classversion": self.classversion,
+            "params": self.convert_params_to_collection(),
+            "dependencies": [d.to_dict() for d in self.dependencies],
+        }
+
+    def convert_params_to_collection(self) -> list | dict:
         if isinstance(self.params, list):
             params = [param_as_dict(p) for p in self.params]
         elif isinstance(self.params, dict):
@@ -57,10 +65,4 @@ class ActorState:
             params = self.params.to_dict()
         else:
             params = param_as_dict(self.params)
-
-        return {
-            "classpath": self.classpath,
-            "classversion": self.classversion,
-            "params": params,
-            "dependencies": [d.to_dict() for d in self.dependencies],
-        }
+        return params

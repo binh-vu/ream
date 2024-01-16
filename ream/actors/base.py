@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import is_dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -9,7 +10,6 @@ from zipfile import ZipFile
 
 import serde.json
 from loguru import logger
-
 from ream.actor_state import ActorState
 from ream.actors.interface import Actor
 from ream.fs import FS
@@ -57,7 +57,6 @@ class BaseActor(Actor, Generic[P]):
         self.params = params
         self.logger = logger.bind(name=self.__class__.__name__)
 
-    @lru_cache(maxsize=None)
     def get_actor_state(self) -> ActorState:
         """Get the state of this actor"""
         deps = [actor.get_actor_state() for actor in self.dep_actors]
@@ -109,9 +108,24 @@ class BaseActor(Actor, Generic[P]):
             self.get_working_fs().root, outfile
         )
 
-    def find_diskpaths_in_state(self) -> list[str]:
+    def find_diskpaths_in_state(
+        self, state: Optional[ActorState] = None
+    ) -> dict[str, str]:
         """Find list of potential disk paths in the actor state"""
-        return []
+        if state is None:
+            return self.find_diskpaths_in_state(self.get_actor_state())
+
+        # check actor params
+        out = {}
+        self._find_diskpath(
+            state.convert_params_to_collection(), state.classpath.split(".")[-1], out
+        )
+
+        # recursive check dependencies
+        for dep in state.dependencies:
+            out.update(self.find_diskpaths_in_state(dep))
+
+        return out
 
     @classmethod
     def get_param_cls(cls) -> Type[P]:
@@ -128,3 +142,33 @@ class BaseActor(Actor, Generic[P]):
     def _fmt_prov(self, *prov: str) -> str:
         """Format the provenances"""
         return ";".join(prov)
+
+    def _find_diskpath(
+        self, collection: list | dict, classpath: str, output: dict[str, list[str]]
+    ):
+        """Find the disk path in the collection"""
+        if isinstance(collection, list):
+            for item in collection:
+                if isinstance(item, (list, dict)):
+                    self._find_diskpath(item, classpath, output)
+            return
+
+        assert isinstance(collection, dict), (classpath, type(collection))
+        for k, v in collection.items():
+            key = f"{classpath}.{k}"
+            if isinstance(v, Path):
+                if key not in output:
+                    output[key] = []
+                output[key].append(str(v))
+            elif (
+                isinstance(v, str)
+                and re.match(r"^(\/|(\.\/)|(\.\.\/))?([a-zA-Z\-\.0-9_=]+\/?)*$", v)
+                is not None
+                and v.find(r"/") != -1
+            ):
+                # the path does not even need to exist
+                if key not in output:
+                    output[key] = []
+                output[key].append(v)
+            elif isinstance(v, (list, dict)):
+                self._find_diskpath(v, key, output)

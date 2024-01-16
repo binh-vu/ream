@@ -15,8 +15,9 @@ import orjson
 import serde.pickle
 from filelock import FileLock
 from loguru import logger
-from ream.helper import orjson_dumps
 from slugify import slugify
+
+from ream.helper import orjson_dumps
 
 
 class FS:
@@ -141,12 +142,15 @@ class FS:
 
     @staticmethod
     def read_fs_export_metadata(infile: Path):
-        pass
-
-    @staticmethod
-    def import_fs(infile: Path):
         with ZipFile(infile, "r") as f:
-            f.read("fs.db")
+            return f.read("_METADATA")
+
+    def import_fs(self, infile: Path):
+        with ZipFile(infile, "r") as f:
+            for file in f.infolist():
+                print(file)
+
+            # self.import_db(f.read("fs.db"))
 
     def export_db(self):
         return pickle.dumps(
@@ -177,6 +181,18 @@ class FS:
             "success": lst[0][2],
             "key": lst[0][3].decode(),
         }
+
+    def add_record(self, record: dict):
+        with self.db:
+            self.db.execute(
+                "INSERT INTO files (path, diskpath, success, key) VALUES (?, ?, ?, ?)",
+                (
+                    record["path"],
+                    record["diskpath"],
+                    record["success"],
+                    record["key"].encode(),
+                ),
+            )
 
 
 class ItemStatus(int, enum.Enum):

@@ -10,7 +10,7 @@ from slugify import slugify
 
 from ream.actor_version import ActorVersion
 from ream.fs import FS
-
+from loguru import logger
 
 if TYPE_CHECKING:
     from ream.actor_state import ActorState
@@ -85,8 +85,9 @@ class ReamWorkspace:
 
     def import_working_dir(self, infile: Path):
         metadata = orjson.loads(FS.read_fs_export_metadata(infile))
+        logger.info("Import working dir: {}", metadata['diskpath'])
         FS(self.workdir / metadata["diskpath"]).import_fs(infile)
-        # self.fs.add_record(metadata)
+        self.fs.add_record(metadata)
 
     def register_base_paths(self, **kwargs: Path):
         for prefix, basepath in kwargs.items():

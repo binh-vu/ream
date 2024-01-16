@@ -36,7 +36,7 @@ class FS:
         if need_init:
             with self.db:
                 self.db.execute(
-                    "CREATE TABLE files(path, diskpath, success INT, key BLOB)"
+                    "CREATE TABLE files(path, diskpath, success INT, key BLOB, UNIQUE(diskpath))"
                 )
 
         self.lock: Optional[FileLock] = None
@@ -135,7 +135,7 @@ class FS:
                             )
                     continue
 
-                if file.name == "fs.db":
+                if file.name == "fs.db" or file.name == "_LOCK":
                     continue
 
                 f.writestr(str(file.relative_to(self.root)), file.read_bytes())
@@ -146,11 +146,16 @@ class FS:
             return f.read("_METADATA")
 
     def import_fs(self, infile: Path):
-        with ZipFile(infile, "r") as f:
-            for file in f.infolist():
-                print(file)
+        with ZipFile(infile, "r") as zf:
+            for file in zf.infolist():
+                fpath = Path(file.filename)
+                if file.filename == "_METADATA" or file.filename == "_LOCK" or file.filename == "fs.db":
+                    continue
 
-            # self.import_db(f.read("fs.db"))
+                with zf.open(file, mode="r") as f:
+                    (self.root / fpath).write_bytes(f.read())
+            
+            self.import_db(zf.read("fs.db"))
 
     def export_db(self):
         return pickle.dumps(
@@ -161,11 +166,11 @@ class FS:
         records = pickle.loads(data)
         with self.db:
             self.db.executemany(
-                "INSERT INTO files (path, diskpath, success, key) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO files (path, diskpath, success, key) VALUES (?, ?, ?, ?)",
                 records,
             )
 
-    def get_record(self, disk_path: Path):
+    def get_record(self, disk_path: Path) -> Optional[dict]:
         if disk_path.is_absolute():
             assert disk_path.is_relative_to(self.root)
             disk_path = disk_path.relative_to(self.root)
@@ -174,6 +179,10 @@ class FS:
             "SELECT path, diskpath, success, key FROM files WHERE diskpath = ?",
             (str(disk_path),),
         ).fetchall()
+        
+        if len(lst) == 0:
+            return None
+        
         assert len(lst) == 1
         return {
             "path": lst[0][0],
@@ -184,6 +193,11 @@ class FS:
 
     def add_record(self, record: dict):
         with self.db:
+            prev_record = self.get_record(Path(record['diskpath']))
+            if prev_record is not None:
+                assert record == prev_record
+                return
+            
             self.db.execute(
                 "INSERT INTO files (path, diskpath, success, key) VALUES (?, ?, ?, ?)",
                 (

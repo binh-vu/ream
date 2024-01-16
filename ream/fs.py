@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import enum
 import os
+import pickle
 import shutil
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Optional, Union
+from zipfile import ZipFile
 
+import orjson
+import serde.pickle
 from filelock import FileLock
 from loguru import logger
 from slugify import slugify
@@ -32,7 +36,7 @@ class FS:
         if need_init:
             with self.db:
                 self.db.execute(
-                    "CREATE TABLE files(path, diskpath, success INT, key BLOB)"
+                    "CREATE TABLE files(path, diskpath, success INT, key BLOB, UNIQUE(diskpath))"
                 )
 
         self.lock: Optional[FileLock] = None
@@ -109,6 +113,100 @@ class FS:
                 self.root,
             )
             yield
+
+    def export_fs(self, outfile: Path, metadata: bytes):
+        """Export the following FS"""
+        with ZipFile(outfile, "w") as f:
+            f.writestr("fs.db", self.export_db())
+            f.writestr("_METADATA", metadata)
+
+            for file in self.root.iterdir():
+                if file.is_dir():
+                    f.mkdir(str(file.relative_to(self.root)))
+                    for dirpath, dirnames, filenames in os.walk(str(file)):
+                        rel_dirpath = Path(dirpath).relative_to(self.root)
+                        f.mkdir(str(rel_dirpath))
+                        for filename in filenames:
+                            if filename == "_LOCK":
+                                continue
+                            f.writestr(
+                                str(rel_dirpath / filename),
+                                (Path(dirpath) / filename).read_bytes(),
+                            )
+                    continue
+
+                if file.name == "fs.db" or file.name == "_LOCK":
+                    continue
+
+                f.writestr(str(file.relative_to(self.root)), file.read_bytes())
+
+    @staticmethod
+    def read_fs_export_metadata(infile: Path):
+        with ZipFile(infile, "r") as f:
+            return f.read("_METADATA")
+
+    def import_fs(self, infile: Path):
+        with ZipFile(infile, "r") as zf:
+            for file in zf.infolist():
+                fpath = Path(file.filename)
+                if file.filename == "_METADATA" or file.filename == "_LOCK" or file.filename == "fs.db":
+                    continue
+
+                with zf.open(file, mode="r") as f:
+                    (self.root / fpath).write_bytes(f.read())
+            
+            self.import_db(zf.read("fs.db"))
+
+    def export_db(self):
+        return pickle.dumps(
+            self.db.execute("SELECT path, diskpath, success, key FROM files").fetchall()
+        )
+
+    def import_db(self, data: bytes):
+        records = pickle.loads(data)
+        with self.db:
+            self.db.executemany(
+                "INSERT OR REPLACE INTO files (path, diskpath, success, key) VALUES (?, ?, ?, ?)",
+                records,
+            )
+
+    def get_record(self, disk_path: Path) -> Optional[dict]:
+        if disk_path.is_absolute():
+            assert disk_path.is_relative_to(self.root)
+            disk_path = disk_path.relative_to(self.root)
+
+        lst = self.db.execute(
+            "SELECT path, diskpath, success, key FROM files WHERE diskpath = ?",
+            (str(disk_path),),
+        ).fetchall()
+        
+        if len(lst) == 0:
+            return None
+        
+        assert len(lst) == 1
+        return {
+            "path": lst[0][0],
+            "diskpath": lst[0][1],
+            "success": lst[0][2],
+            "key": lst[0][3].decode(),
+        }
+
+    def add_record(self, record: dict):
+        with self.db:
+            prev_record = self.get_record(Path(record['diskpath']))
+            if prev_record is not None:
+                assert record == prev_record
+                return
+            
+            self.db.execute(
+                "INSERT INTO files (path, diskpath, success, key) VALUES (?, ?, ?, ?)",
+                (
+                    record["path"],
+                    record["diskpath"],
+                    record["success"],
+                    record["key"].encode(),
+                ),
+            )
 
 
 class ItemStatus(int, enum.Enum):
@@ -283,4 +381,5 @@ class FSPath:
                         f.unlink()
             return self.fs.root / self._realdiskpath
 
+        raise Exception("Unreachable!")
         raise Exception("Unreachable!")

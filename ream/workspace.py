@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Union
+from typing import Union, TYPE_CHECKING
 
+import orjson
 from slugify import slugify
 
-from ream.actor_state import ActorState
+
 from ream.actor_version import ActorVersion
 from ream.fs import FS
+from loguru import logger
+
+if TYPE_CHECKING:
+    from ream.actor_state import ActorState
 
 
 class ReamWorkspace:
@@ -17,6 +22,10 @@ class ReamWorkspace:
     def __init__(self, workdir: Union[str, Path]):
         self.workdir = Path(workdir)
         self.fs = FS(self.workdir)
+
+        # register base paths to abstract away the exact locations of disk paths
+        # similar to prefix & namespace
+        self.registered_base_paths: dict[str, Path] = {}
 
     @staticmethod
     def get_instance() -> ReamWorkspace:
@@ -68,3 +77,24 @@ class ReamWorkspace:
                 version.assert_equal(ActorVersion.load(version_file))
 
         return realpath
+
+    def export_working_dir(self, workdir: Path, outfile: Path):
+        assert workdir.is_relative_to(self.workdir)
+        metadata = orjson.dumps(self.fs.get_record(workdir))
+        FS(workdir).export_fs(outfile, metadata=metadata)
+
+    def import_working_dir(self, infile: Path):
+        metadata = orjson.loads(FS.read_fs_export_metadata(infile))
+        logger.info("Import working dir: {}", metadata['diskpath'])
+        FS(self.workdir / metadata["diskpath"]).import_fs(infile)
+        self.fs.add_record(metadata)
+
+    def register_base_paths(self, **kwargs: Path):
+        for prefix, basepath in kwargs.items():
+            self.registered_base_paths[prefix] = Path(basepath)
+
+    def get_rel_path(self, path: Path) -> str:
+        for prefix, basepath in self.registered_base_paths.items():
+            if path.is_relative_to(basepath):
+                return f"{prefix}:{path.relative_to(basepath)}"
+        raise ValueError(f"Cannot find the base path of {path}")

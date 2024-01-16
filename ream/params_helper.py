@@ -1,11 +1,12 @@
 from __future__ import annotations
-
+import os
 from copy import deepcopy
 from dataclasses import Field, asdict, dataclass, field, fields, is_dataclass, replace
 from functools import partial
 from typing import Any, Dict, List, Optional, Type, Union
-
+from pathlib import Path, PosixPath, WindowsPath
 import orjson
+from ream.workspace import ReamWorkspace
 
 DataClassInstance = Any
 
@@ -108,6 +109,12 @@ class PluginParams:
     clsargs: dict = field(default_factory=dict, metadata={"parser": orjson.loads})
 
 
+BasePath = WindowsPath if os.name == 'nt' else PosixPath
+class RelWorkdirPath(BasePath):
+    """A path when serialized will be converted to a relative path to the working directory."""
+    pass
+
+
 def are_valid_parameters(
     params: Union[
         DataClassInstance, List[DataClassInstance], Dict[str, DataClassInstance]
@@ -177,5 +184,7 @@ def _param_as_dict_inner(obj, dict_factory):
             )
             for k, v in obj.items()
         )
+    elif isinstance(obj, RelWorkdirPath):
+        return str(ReamWorkspace.get_instance().get_rel_path(obj.absolute()))
     else:
         return deepcopy(obj)

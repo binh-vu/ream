@@ -217,6 +217,7 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
         strict: bool = False,
         namespace: Optional[str] = None,
         auto_naming: bool = False,
+        ignore_if_exists: bool = False,
     ):
         if namespace is None:
             if auto_naming:
@@ -227,7 +228,16 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
             else:
                 namespace = ""
 
-        target_actor_id = self.add_node(ActorNode.new(cls, namespace=namespace))
+        actor_node = ActorNode.new(cls, namespace=namespace)
+        if any(actor_node.clspath == u.clspath for u in self.iter_nodes()):
+            if ignore_if_exists:
+                return
+            
+            raise ValueError(
+                f"Cannot add actor {cls} because it is already in the graph"
+            )
+
+        target_actor_id = self.add_node(actor_node)
         argtypes = get_type_hints(cls.__init__)
         for i, name in enumerate(signature(cls.__init__).parameters.keys()):
             if name not in argtypes:

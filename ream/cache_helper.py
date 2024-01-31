@@ -655,7 +655,9 @@ class CacheArgsHelper:
             elif origin is Union:
                 args = get_args(argtype)
                 if any(
-                    not issubclass(a, (str, int, bool)) and a is not NoneType
+                    a is not NoneType
+                    and get_origin(a) is not Literal
+                    and not issubclass(a, (str, int, bool))
                     for a in args
                 ):
                     raise TypeError(

@@ -15,9 +15,8 @@ import orjson
 import serde.pickle
 from filelock import FileLock
 from loguru import logger
-from slugify import slugify
-
 from ream.helper import orjson_dumps
+from slugify import slugify
 
 
 class FS:
@@ -123,15 +122,19 @@ class FS:
             for file in self.root.iterdir():
                 if file.is_dir():
                     f.mkdir(str(file.relative_to(self.root)))
+                    os_walk_it = os.walk(str(file))
+                    os_walk_root = next(os_walk_it)[0]  # skip the root
+                    assert Path(os_walk_root) == file
                     for dirpath, dirnames, filenames in os.walk(str(file)):
-                        rel_dirpath = Path(dirpath).relative_to(self.root)
+                        dirpath = Path(dirpath)
+                        rel_dirpath = dirpath.relative_to(self.root)
                         f.mkdir(str(rel_dirpath))
                         for filename in filenames:
                             if filename == "_LOCK":
                                 continue
                             f.writestr(
                                 str(rel_dirpath / filename),
-                                (Path(dirpath) / filename).read_bytes(),
+                                (dirpath / filename).read_bytes(),
                             )
                     continue
 
@@ -149,12 +152,16 @@ class FS:
         with ZipFile(infile, "r") as zf:
             for file in zf.infolist():
                 fpath = Path(file.filename)
-                if file.filename == "_METADATA" or file.filename == "_LOCK" or file.filename == "fs.db":
+                if (
+                    file.filename == "_METADATA"
+                    or file.filename == "_LOCK"
+                    or file.filename == "fs.db"
+                ):
                     continue
 
                 with zf.open(file, mode="r") as f:
                     (self.root / fpath).write_bytes(f.read())
-            
+
             self.import_db(zf.read("fs.db"))
 
     def export_db(self):
@@ -179,10 +186,10 @@ class FS:
             "SELECT path, diskpath, success, key FROM files WHERE diskpath = ?",
             (str(disk_path),),
         ).fetchall()
-        
+
         if len(lst) == 0:
             return None
-        
+
         assert len(lst) == 1
         return {
             "path": lst[0][0],
@@ -193,11 +200,11 @@ class FS:
 
     def add_record(self, record: dict):
         with self.db:
-            prev_record = self.get_record(Path(record['diskpath']))
+            prev_record = self.get_record(Path(record["diskpath"]))
             if prev_record is not None:
                 assert record == prev_record
                 return
-            
+
             self.db.execute(
                 "INSERT INTO files (path, diskpath, success, key) VALUES (?, ?, ?, ?)",
                 (

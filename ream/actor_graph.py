@@ -24,7 +24,6 @@ import yada
 from graph.interface import BaseEdge, BaseNode
 from graph.retworkx.digraph import RetworkXDiGraph
 from loguru import logger
-
 from ream.actors.base import BaseActor
 from ream.actors.interface import Actor
 from ream.helper import _logger_formatter, get_classpath
@@ -232,7 +231,7 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
         if any(actor_node.clspath == u.clspath for u in self.iter_nodes()):
             if ignore_if_exists:
                 return
-            
+
             raise ValueError(
                 f"Cannot add actor {cls} because it is already in the graph"
             )

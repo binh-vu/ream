@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 import orjson
-from slugify import slugify
-
-
+from loguru import logger
 from ream.actor_version import ActorVersion
 from ream.fs import FS
-from loguru import logger
+from slugify import slugify
 
 if TYPE_CHECKING:
     from ream.actor_state import ActorState
@@ -41,6 +39,20 @@ class ReamWorkspace:
         else:
             ReamWorkspace.instance = ReamWorkspace(workdir)
         return ReamWorkspace.instance
+
+    def to_dict(self):
+        return {
+            "workdir": str(self.workdir),
+            "registered_base_paths": {
+                k: str(v) for k, v in self.registered_base_paths.items()
+            },
+        }
+
+    @staticmethod
+    def init_from_dict(o: dict):
+        ReamWorkspace.init(o["workdir"]).registered_base_paths.update(
+            {k: Path(v) for k, v in o["registered_base_paths"].items()}
+        )
 
     def reserve_working_dir(self, state: ActorState) -> Path:
         classversion = slugify(str(state.classversion)).replace("-", "_")
@@ -85,7 +97,7 @@ class ReamWorkspace:
 
     def import_working_dir(self, infile: Path):
         metadata = orjson.loads(FS.read_fs_export_metadata(infile))
-        logger.info("Import working dir: {}", metadata['diskpath'])
+        logger.info("Import working dir: {}", metadata["diskpath"])
         FS(self.workdir / metadata["diskpath"]).import_fs(infile)
         self.fs.add_record(metadata)
 

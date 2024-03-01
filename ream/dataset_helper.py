@@ -11,11 +11,10 @@ import orjson
 import serde.json
 import serde.pickle
 from loguru import logger
-from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
-from typing_extensions import TypeGuard
-
 from ream.data_model_helper import DataSerdeMixin
 from ream.helper import Compression, to_serde_compression
+from serde.helper import AVAILABLE_COMPRESSIONS, get_filepath
+from typing_extensions import TypeGuard
 
 
 class RawSlice(TypedDict):
@@ -268,7 +267,7 @@ class DatasetQuery:
             for subset in select.split(","):
                 subset = subset.strip()
                 m = re.match(
-                    r"^(?P<sname>[^\[]*)\[?(?P<start>\d+\%?)?:(?P<end>\d+\%?)?\]?$",
+                    r"^((?P<sname>[^\[]+)\[)?(?P<start>\d+\%?)?:(?P<end>\d+\%?)?\]?$",
                     subset,
                 )
                 if m is not None:
@@ -304,9 +303,13 @@ class DatasetQuery:
                         end = int(grpend[:-1]) if grpend.endswith("%") else int(grpend)
 
                     if is_percentage:
-                        subsets[m.group("sname")] = PercentageRangeSelection(start, end)
+                        subsets[m.group("sname") or ""] = PercentageRangeSelection(
+                            start, end
+                        )
                     else:
-                        subsets[m.group("sname")] = AbsoluteRangeSelection(start, end)
+                        subsets[m.group("sname") or ""] = AbsoluteRangeSelection(
+                            start, end
+                        )
                 else:
                     m = re.match(
                         r"^(?P<sname>[^\[]*)\[(?P<index>\d+(?:,\d+)*)\]$",
@@ -348,9 +351,11 @@ class DatasetQuery:
 
         # gate check for percentage range selection that select all data
         subsets = {
-            subset: selection.to_absolute(n_exs)
-            if isinstance(selection, PercentageRangeSelection)
-            else selection
+            subset: (
+                selection.to_absolute(n_exs)
+                if isinstance(selection, PercentageRangeSelection)
+                else selection
+            )
             for subset, selection in self.subsets.items()
         }
         if all(isinstance(s, PercentageRangeSelection) for s in self.subsets.values()):

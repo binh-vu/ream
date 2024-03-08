@@ -9,3 +9,4 @@
 ### [Fixed]
 
 - Update type hints of `get_classpath` to support both classes & functions
+- Update `hugedict` to the latest version `2.12.0` that fixed various bugs

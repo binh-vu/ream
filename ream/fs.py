@@ -8,7 +8,8 @@ import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, Optional, Union
+from random import choice, choices
+from typing import Generator, Literal, Optional, Union
 from zipfile import ZipFile
 
 import orjson
@@ -159,8 +160,12 @@ class FS:
                 ):
                     continue
 
-                with zf.open(file, mode="r") as f:
-                    (self.root / fpath).write_bytes(f.read())
+                if file.is_dir():
+                    (self.root / fpath).mkdir(exist_ok=True, parents=True)
+                else:
+                    (self.root / fpath).parent.mkdir(exist_ok=True, parents=True)
+                    with zf.open(file, mode="r") as f:
+                        (self.root / fpath).write_bytes(f.read())
 
             self.import_db(zf.read("fs.db"))
 
@@ -390,3 +395,29 @@ class FSPath:
 
         raise Exception("Unreachable!")
         raise Exception("Unreachable!")
+
+
+if __name__ == "__main__":
+    import click
+
+    @click.command()
+    @click.option("-i", "--input", required=True, help="FS's root directory")
+    @click.option(
+        "-o",
+        "--output",
+        required=True,
+        help="Output file if it's an export command, Input file if it's an import command.",
+    )
+    @click.option(
+        "-c", "--command", required=True, help="Command to run: import/export"
+    )
+    def cli(input: str, output: str, command: Literal["import", "export"]):
+        fs = FS(Path(input))
+
+        if command == "import":
+            fs.import_fs(Path(output))
+
+        if command == "export":
+            fs.export_fs(Path(output), b"From v100/000")
+
+    cli()

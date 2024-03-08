@@ -7,6 +7,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import (
+    Callable,
     Literal,
     Optional,
     Sequence,
@@ -26,7 +27,7 @@ TYPE_ALIASES = {"typing.List": "list", "typing.Dict": "dict", "typing.Set": "set
 Compression = Literal["snappy", "gzip", "lz4", "zstd", "bz2"]
 
 
-def get_classpath(type: Type) -> str:
+def get_classpath(type: Type | Callable) -> str:
     if type.__module__ == "builtins":
         return type.__qualname__
 

@@ -796,6 +796,11 @@ class SingleNumpyArray(NumpyDataModel):
     def __init__(self, value: NDArray[Shape["*"], Number]):
         self.value = value
 
+    def __getitem__(self, idx: int | slice):
+        if isinstance(idx, slice):
+            return self.__class__(self.value[idx])
+        return self.value[idx]
+
 
 class Single2DNumpyArray(NumpyDataModel):
     __slots__ = ["value"]

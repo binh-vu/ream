@@ -5,6 +5,7 @@
 ### Added
 
 - Add FS cli to import/export data
+- Retrieve item from SingleNumpyArray with `__getitem__`.
 
 ### Fixed
 

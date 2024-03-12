@@ -122,7 +122,7 @@ class FS:
 
             for file in self.root.iterdir():
                 if file.is_dir():
-                    f.mkdir(str(file.relative_to(self.root)))
+                    # f.mkdir(str(file.relative_to(self.root)))
                     os_walk_it = os.walk(str(file))
                     os_walk_root = next(os_walk_it)[0]  # skip the root
                     assert Path(os_walk_root) == file

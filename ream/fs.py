@@ -352,6 +352,18 @@ class FSPath:
                             + ext
                         )
                     )
+
+                # if _realdiskpath does not exist -- meaning the file was deleted, but the entry is still in the database
+                # we are going to have UNIQUE constraint violation, so we need to remove it first
+                record = self.fs.db.execute(
+                    "SELECT rowid FROM files WHERE diskpath = ? LIMIT 1",
+                    (self._realdiskpath,),
+                ).fetchone()
+                if record is not None:
+                    self.fs.db.execute(
+                        "DELETE FROM files WHERE rowid = ?", (record[0],)
+                    )
+
                 cur = self.fs.db.execute(
                     "INSERT INTO files VALUES (?, ?, ?, ?)",
                     (
@@ -393,7 +405,6 @@ class FSPath:
                         f.unlink()
             return self.fs.root / self._realdiskpath
 
-        raise Exception("Unreachable!")
         raise Exception("Unreachable!")
 
 

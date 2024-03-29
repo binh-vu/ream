@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import (
+    Any,
     Callable,
     List,
     Literal,
@@ -791,9 +792,9 @@ class NumpyDataModelHelper:
 class SingleNumpyArray(NumpyDataModel):
     __slots__ = ["value"]
 
-    value: NDArray[Shape["*"], Number]
+    value: NDArray[Shape["*"], Any]
 
-    def __init__(self, value: NDArray[Shape["*"], Number]):
+    def __init__(self, value: NDArray[Shape["*"], Any]):
         self.value = value
 
     def __getitem__(self, idx: int | slice):
@@ -805,9 +806,9 @@ class SingleNumpyArray(NumpyDataModel):
 class Single2DNumpyArray(NumpyDataModel):
     __slots__ = ["value"]
 
-    value: NDArray[Shape["*,*"], Number]
+    value: NDArray[Shape["*,*"], Any]
 
-    def __init__(self, value: NDArray[Shape["*,*"], Number]):
+    def __init__(self, value: NDArray[Shape["*,*"], Any]):
         self.value = value
 
 
@@ -816,15 +817,15 @@ class SingleLevelIndexedNumpyArray(NumpyDataModel):
     __slots__ = ["index", "value"]
 
     index: dict[str, tuple[int, int]]
-    value: NDArray[Shape["*,*"], Number]
+    value: NDArray[Shape["*,*"], Any]
 
     def __init__(
-        self, index: dict[str, tuple[int, int]], value: NDArray[Shape["*,*"], Number]
+        self, index: dict[str, tuple[int, int]], value: NDArray[Shape["*,*"], Any]
     ):
         self.index = index
         self.value = value
 
-    def get_array(self, key: str) -> NDArray[Shape["*"], Number]:
+    def get_array(self, key: str) -> NDArray[Shape["*"], Any]:
         start, end = self.index[key]
         return self.value[start:end]
 
@@ -832,12 +833,12 @@ class SingleLevelIndexedNumpyArray(NumpyDataModel):
 class DictNumpyArray(NumpyDataModel):
     __slots__ = ["value"]
 
-    value: dict[str, NDArray[Shape["*"], Number]]
+    value: dict[str, NDArray[Shape["*"], Any]]
 
-    def __init__(self, value: dict[str, NDArray[Shape["*"], Number]]):
+    def __init__(self, value: dict[str, NDArray[Shape["*"], Any]]):
         self.value = value
 
-    def __getitem__(self, item: str) -> NDArray[Shape["*"], Number]:
+    def __getitem__(self, item: str) -> NDArray[Shape["*"], Any]:
         return self.value[item]
 
     def save(

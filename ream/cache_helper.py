@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bz2
+import csv
 import gzip
 import pickle
 import weakref
@@ -10,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import fields
 from functools import lru_cache, partial, wraps
 from inspect import Parameter, signature
+from io import StringIO
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -24,12 +26,14 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    cast,
     get_args,
     get_origin,
     get_type_hints,
 )
 
 import orjson
+import serde.csv
 from hugedict.misc import Chain2, identity
 from hugedict.sqlite import SqliteDict, SqliteDictFieldType
 from loguru import logger
@@ -83,15 +87,19 @@ class SqliteBackendFactory:
         indent: Literal[0, 2] = 0,
     ):
         backend = SqliteBackend(
-            ser=partial(
-                FileBackendFactory.json_ser,
-                orjson_opts=DEFAULT_ORJSON_OPTS | orjson.OPT_INDENT_2,
-            )
-            if indent == 2
-            else FileBackendFactory.json_ser,
-            deser=FileBackendFactory.json_deser
-            if cls is None
-            else partial(FileBackendFactory.json_deser_cls, cls),
+            ser=(
+                partial(
+                    FileBackendFactory.json_ser,
+                    orjson_opts=DEFAULT_ORJSON_OPTS | orjson.OPT_INDENT_2,
+                )
+                if indent == 2
+                else FileBackendFactory.json_ser
+            ),
+            deser=(
+                FileBackendFactory.json_deser
+                if cls is None
+                else partial(FileBackendFactory.json_deser_cls, cls)
+            ),
             compression=compression,
         )
         return wrap_backend(backend, mem_persist, log_serde_time)
@@ -217,6 +225,23 @@ class FileBackendFactory:
         return wrap_backend(backend, mem_persist, log_serde_time)
 
     @staticmethod
+    def csv(
+        filename: Optional[Union[str, Callable[..., str]]] = None,
+        delimiter: str = ",",
+        compression: Optional[Compression] = None,
+        mem_persist: Optional[Union[MemBackend, bool]] = None,
+        log_serde_time: bool = False,
+    ):
+        backend = FileBackend(
+            ser=FileBackendFactory.csv_ser,
+            deser=FileBackendFactory.csv_deser,
+            filename=filename,
+            fileext="csv",
+            compression=compression,
+        )
+        return wrap_backend(backend, mem_persist, log_serde_time)
+
+    @staticmethod
     def jl(
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Compression] = None,
@@ -226,9 +251,11 @@ class FileBackendFactory:
     ):
         backend = FileBackend(
             ser=FileBackendFactory.jl_ser,
-            deser=FileBackendFactory.jl_deser
-            if cls is None
-            else partial(FileBackendFactory.jl_deser_cls, cls),
+            deser=(
+                FileBackendFactory.jl_deser
+                if cls is None
+                else partial(FileBackendFactory.jl_deser_cls, cls)
+            ),
             filename=filename,
             fileext="jl",
             compression=compression,
@@ -245,15 +272,19 @@ class FileBackendFactory:
         indent: Literal[0, 2] = 0,
     ):
         backend = FileBackend(
-            ser=partial(
-                FileBackendFactory.json_ser,
-                orjson_opts=DEFAULT_ORJSON_OPTS | orjson.OPT_INDENT_2,
-            )
-            if indent == 2
-            else FileBackendFactory.json_ser,
-            deser=FileBackendFactory.json_deser
-            if cls is None
-            else partial(FileBackendFactory.json_deser_cls, cls),
+            ser=(
+                partial(
+                    FileBackendFactory.json_ser,
+                    orjson_opts=DEFAULT_ORJSON_OPTS | orjson.OPT_INDENT_2,
+                )
+                if indent == 2
+                else FileBackendFactory.json_ser
+            ),
+            deser=(
+                FileBackendFactory.json_deser
+                if cls is None
+                else partial(FileBackendFactory.json_deser_cls, cls)
+            ),
             filename=filename,
             fileext="json",
             compression=compression,
@@ -286,6 +317,35 @@ class FileBackendFactory:
     @staticmethod
     def json_deser_cls(clz: Type[JsonSerde], data: bytes):
         return clz.from_dict(orjson.loads(data))
+
+    @staticmethod
+    def csv_ser(
+        obj: list[dict[str, str]] | list[list[str]],
+        delimiter: str = ",",
+    ):
+        if len(obj) == 0:
+            return b""
+
+        f = StringIO()
+        writer = csv.writer(
+            f, delimiter=delimiter, quoting=csv.QUOTE_MINIMAL, lineterminator="\n"
+        )
+
+        if isinstance(obj[0], dict):
+            keys = list(obj[0].keys())
+            writer.writerow(keys)
+            for row in cast(list[dict[str, str]], obj):
+                writer.writerow((row[key] for key in keys))
+        else:
+            for row in obj:
+                writer.writerow(row)
+        return f.getvalue().encode()
+
+    @staticmethod
+    def csv_deser(data: bytes, delimiter: str = ","):
+        f = StringIO(data.decode())
+        reader = csv.reader(f, delimiter=delimiter)
+        return list(reader)
 
     @staticmethod
     def jl_ser(
@@ -776,16 +836,13 @@ class Backend(ABC):
         yield None
 
     @abstractmethod
-    def has_key(self, key: bytes) -> bool:
-        ...
+    def has_key(self, key: bytes) -> bool: ...
 
     @abstractmethod
-    def get(self, key: bytes) -> Value:
-        ...
+    def get(self, key: bytes) -> Value: ...
 
     @abstractmethod
-    def set(self, key: bytes, value: Value) -> None:
-        ...
+    def set(self, key: bytes, value: Value) -> None: ...
 
 
 class MemBackend(Backend):
@@ -1130,8 +1187,7 @@ class LogSerdeTimeBackend(Backend):
 class HasWorkingFsTrait(Protocol):
     logger: Logger
 
-    def get_working_fs(self) -> FS:
-        ...
+    def get_working_fs(self) -> FS: ...
 
 
 class Cacheable:
@@ -1210,12 +1266,10 @@ def assign_dataclass_field_names(cls: type[T]):
 
 
 class SerdeProtocol(Protocol):
-    def ser(self) -> bytes:
-        ...
+    def ser(self) -> bytes: ...
 
     @classmethod
-    def deser(cls, data: bytes) -> Self:
-        ...
+    def deser(cls, data: bytes) -> Self: ...
 
 
 def unwrap_cache_decorators(cls: type, methods: list[str] | None = None):

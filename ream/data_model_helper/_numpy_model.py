@@ -3,7 +3,8 @@ from __future__ import annotations
 import pickle
 import struct
 from copy import deepcopy
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
+from functools import partial
 from pathlib import Path
 from typing import (
     Any,
@@ -28,7 +29,7 @@ import serde.json
 from nptyping import NDArray, Shape
 from nptyping.ndarray import NDArrayMeta  # type: ignore
 from nptyping.shape_expression import get_dimensions  # type: ignore
-from nptyping.typing_ import Number
+from nptyping.typing_ import Bool, Number
 from ream.data_model_helper._batch_file_manager import BatchFileManager, VirtualDir
 from ream.data_model_helper._container import DataSerdeMixin
 from ream.data_model_helper._index import Index, OffsetIndex
@@ -40,6 +41,7 @@ from ream.helper import (
     to_serde_compression,
 )
 from serde.helper import get_filepath, get_open_fn
+from sm.misc.funcs import get_encoder_as_list
 from tqdm import tqdm
 from typing_extensions import Self
 
@@ -136,7 +138,7 @@ class NumpyDataModel(DataSerdeMixin):
                         )
 
             if useorjson:
-                default_serdict = orjson.dumps
+                default_serdict = partial(orjson.dumps, option=orjson.OPT_NON_STR_KEYS)
                 default_deserdict = orjson.loads
             else:
                 default_serdict = pickle.dumps
@@ -803,6 +805,53 @@ class SingleNumpyArray(NumpyDataModel):
         return self.value[idx]
 
 
+class EncodedSingleNumpyArray(NumpyDataModel):
+    __slots__ = ["encoder", "value"]
+
+    encoder: list[str]
+    value: NDArray[Shape["*"], Any]
+
+    def __init__(self, encoder: list[str], value: NDArray[Shape["*"], Any]):
+        self.encoder = encoder
+        self.value = value
+
+    def __getitem__(self, idx: int | slice):
+        if isinstance(idx, slice):
+            return self.__class__(self.encoder, self.value[idx])
+        return self.value[idx]
+
+    @staticmethod
+    def from_array(arr, encoder: Optional[dict[str, int]] = None):
+        encoder = encoder or {}
+        new_arr = []
+        for val in arr:
+            if val not in encoder:
+                encoder[val] = len(encoder)
+            new_arr.append(encoder[val])
+
+        return EncodedSingleNumpyArray(get_encoder_as_list(encoder), np.array(new_arr))
+
+    @staticmethod
+    def from_lst_arrays(arr, encoder: Optional[dict[str, int]] = None):
+        encoder = encoder or {}
+        new_arr = np.empty((len(arr),), dtype=np.object_)
+        for i, lst in enumerate(arr):
+            new_lst = []
+            for val in lst:
+                if val not in encoder:
+                    encoder[val] = len(encoder)
+                new_lst.append(encoder[val])
+            new_arr[i] = np.array(new_lst)
+
+        return EncodedSingleNumpyArray(get_encoder_as_list(encoder), new_arr)
+
+    def get_encoder_as_list(self) -> list:
+        return self.encoder
+
+    def to_list(self):
+        return [self.encoder[val] for val in self.value]
+
+
 class Single2DNumpyArray(NumpyDataModel):
     __slots__ = ["value"]
 
@@ -817,10 +866,10 @@ class SingleLevelIndexedNumpyArray(NumpyDataModel):
     __slots__ = ["index", "value"]
 
     index: dict[str, tuple[int, int]]
-    value: NDArray[Shape["*,*"], Any]
+    value: NDArray[Shape["*"], Any]
 
     def __init__(
-        self, index: dict[str, tuple[int, int]], value: NDArray[Shape["*,*"], Any]
+        self, index: dict[str, tuple[int, int]], value: NDArray[Shape["*"], Any]
     ):
         self.index = index
         self.value = value
@@ -828,6 +877,49 @@ class SingleLevelIndexedNumpyArray(NumpyDataModel):
     def get_array(self, key: str) -> NDArray[Shape["*"], Any]:
         start, end = self.index[key]
         return self.value[start:end]
+
+
+class EncodedSingleMasked2DNumpyArray(NumpyDataModel):
+    __slots__ = ["encoder", "value", "mask"]
+
+    encoder: list[str]
+    value: NDArray[Shape["*,*"], Number]
+    mask: NDArray[Shape["*,*"], Bool]
+
+    def __init__(
+        self,
+        encoder: list[str],
+        value: NDArray[Shape["*,*"], Number],
+        mask: NDArray[Shape["*,*"], Bool],
+    ):
+        self.encoder = encoder
+        self.value = value
+        self.mask = mask
+
+    def __getitem__(self, idx: int | slice):
+        if isinstance(idx, slice):
+            return self.__class__(self.encoder, self.value[idx], self.mask[idx])
+        return self.value[idx], self.mask[idx]
+
+    @staticmethod
+    def from_list_arrays(arr, encoder: Optional[dict[str, int]] = None):
+        encoder = encoder or {}
+        ncols = max(len(x) for x in arr)
+        new_arr = np.zeros((len(arr), ncols), dtype=np.int32)
+        mask = np.ones(new_arr.shape, dtype=np.bool_)
+        for i, lst in enumerate(arr):
+            for j, val in enumerate(lst):
+                if val not in encoder:
+                    encoder[val] = len(encoder)
+                new_arr[i, j] = encoder[val]
+            mask[i, len(lst) :] = False
+
+        return EncodedSingleMasked2DNumpyArray(
+            get_encoder_as_list(encoder), new_arr, mask
+        )
+
+    def get_encoder_as_list(self) -> list:
+        return self.encoder
 
 
 class DictNumpyArray(NumpyDataModel):
@@ -867,14 +959,16 @@ class DictNumpyArray(NumpyDataModel):
 
 SingleLevelIndexedNumpyArray.init()
 SingleNumpyArray.init()
+EncodedSingleNumpyArray.init()
+EncodedSingleMasked2DNumpyArray.init()
 Single2DNumpyArray.init()
 DictNumpyArray.init()
 
 
 def ser_dict_array(
-    odict: dict[str, NumpyDataModel],
+    odict: dict[str, DataSerdeMixin],
     loc: Path,
-    compression: Optional[Compression],
+    compression: Optional[Compression] = None,
 ):
     classes = {}
     for key, value in odict.items():
@@ -883,7 +977,7 @@ def ser_dict_array(
     serde.json.ser(classes, loc / "metadata.json")
 
 
-def deser_dict_array(loc: Path, compression: Optional[Compression]):
+def deser_dict_array(loc: Path, compression: Optional[Compression] = None):
     classes = serde.json.deser(loc / "metadata.json")
     objects = {}
     for key, cls in classes.items():

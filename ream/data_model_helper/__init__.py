@@ -3,6 +3,8 @@ from ream.data_model_helper._index import Index, OffsetIndex
 from ream.data_model_helper._numpy_model import (
     ContiguousIndexChecker,
     DictNumpyArray,
+    EncodedSingleMasked2DNumpyArray,
+    EncodedSingleNumpyArray,
     NumpyDataModel,
     NumpyDataModelContainer,
     NumpyDataModelHelper,
@@ -13,6 +15,7 @@ from ream.data_model_helper._numpy_model import (
     deser_dict_array,
     ser_dict_array,
 )
+from ream.data_model_helper._pandas_model import SinglePandasDataFrame
 from ream.data_model_helper._polars_model import (
     PolarDataModel,
     PolarDataModelMetadata,
@@ -33,6 +36,9 @@ __all__ = [
     "ContiguousIndexChecker",
     "Single2DNumpyArray",
     "SingleNumpyArray",
+    "EncodedSingleNumpyArray",
+    "EncodedSingleMasked2DNumpyArray",
+    "SinglePandasDataFrame",
     "DictNumpyArray",
     "SingleLevelIndexedNumpyArray",
     "PolarDataModel",

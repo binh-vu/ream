@@ -41,7 +41,7 @@ from ream.helper import (
     to_serde_compression,
 )
 from serde.helper import get_filepath, get_open_fn
-from sm.misc.funcs import get_encoder_as_list
+from sm.misc.funcs import get_decoder
 from tqdm import tqdm
 from typing_extensions import Self
 
@@ -806,18 +806,18 @@ class SingleNumpyArray(NumpyDataModel):
 
 
 class EncodedSingleNumpyArray(NumpyDataModel):
-    __slots__ = ["encoder", "value"]
+    __slots__ = ["decoder", "value"]
 
-    encoder: list[str]
+    decoder: list[str]
     value: NDArray[Shape["*"], Any]
 
-    def __init__(self, encoder: list[str], value: NDArray[Shape["*"], Any]):
-        self.encoder = encoder
+    def __init__(self, decoder: list[str], value: NDArray[Shape["*"], Any]):
+        self.decoder = decoder
         self.value = value
 
     def __getitem__(self, idx: int | slice):
         if isinstance(idx, slice):
-            return self.__class__(self.encoder, self.value[idx])
+            return self.__class__(self.decoder, self.value[idx])
         return self.value[idx]
 
     @staticmethod
@@ -829,7 +829,7 @@ class EncodedSingleNumpyArray(NumpyDataModel):
                 encoder[val] = len(encoder)
             new_arr.append(encoder[val])
 
-        return EncodedSingleNumpyArray(get_encoder_as_list(encoder), np.array(new_arr))
+        return EncodedSingleNumpyArray(get_decoder(encoder), np.array(new_arr))
 
     @staticmethod
     def from_lst_arrays(arr, encoder: Optional[dict[str, int]] = None):
@@ -843,13 +843,10 @@ class EncodedSingleNumpyArray(NumpyDataModel):
                 new_lst.append(encoder[val])
             new_arr[i] = np.array(new_lst)
 
-        return EncodedSingleNumpyArray(get_encoder_as_list(encoder), new_arr)
-
-    def get_encoder_as_list(self) -> list:
-        return self.encoder
+        return EncodedSingleNumpyArray(get_decoder(encoder), new_arr)
 
     def to_list(self):
-        return [self.encoder[val] for val in self.value]
+        return [self.decoder[val] for val in self.value]
 
 
 class Single2DNumpyArray(NumpyDataModel):
@@ -880,25 +877,25 @@ class SingleLevelIndexedNumpyArray(NumpyDataModel):
 
 
 class EncodedSingleMasked2DNumpyArray(NumpyDataModel):
-    __slots__ = ["encoder", "value", "mask"]
+    __slots__ = ["decoder", "value", "mask"]
 
-    encoder: list[str]
+    decoder: list[str]
     value: NDArray[Shape["*,*"], Number]
     mask: NDArray[Shape["*,*"], Bool]
 
     def __init__(
         self,
-        encoder: list[str],
+        decoder: list[str],
         value: NDArray[Shape["*,*"], Number],
         mask: NDArray[Shape["*,*"], Bool],
     ):
-        self.encoder = encoder
+        self.decoder = decoder
         self.value = value
         self.mask = mask
 
     def __getitem__(self, idx: int | slice):
         if isinstance(idx, slice):
-            return self.__class__(self.encoder, self.value[idx], self.mask[idx])
+            return self.__class__(self.decoder, self.value[idx], self.mask[idx])
         return self.value[idx], self.mask[idx]
 
     @staticmethod
@@ -914,12 +911,7 @@ class EncodedSingleMasked2DNumpyArray(NumpyDataModel):
                 new_arr[i, j] = encoder[val]
             mask[i, len(lst) :] = False
 
-        return EncodedSingleMasked2DNumpyArray(
-            get_encoder_as_list(encoder), new_arr, mask
-        )
-
-    def get_encoder_as_list(self) -> list:
-        return self.encoder
+        return EncodedSingleMasked2DNumpyArray(get_decoder(encoder), new_arr, mask)
 
 
 class DictNumpyArray(NumpyDataModel):

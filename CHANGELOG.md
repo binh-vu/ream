@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.1] - 2024-04-21
+
+### Fixed
+
+- Fix itemgetter of numpy data models
+- Fix type hints error in Python 3.9
+
 ## [4.3.0] - 2024-03-26
 
 ### Added

@@ -11,6 +11,7 @@ from typing import (
     Callable,
     List,
     Literal,
+    Mapping,
     Optional,
     Sequence,
     Tuple,
@@ -29,7 +30,7 @@ import serde.json
 from nptyping import NDArray, Shape
 from nptyping.ndarray import NDArrayMeta  # type: ignore
 from nptyping.shape_expression import get_dimensions  # type: ignore
-from nptyping.typing_ import Bool, Number
+from nptyping.typing_ import Bool, Int32, Number
 from ream.data_model_helper._batch_file_manager import BatchFileManager, VirtualDir
 from ream.data_model_helper._container import DataSerdeMixin
 from ream.data_model_helper._index import Index, OffsetIndex
@@ -41,7 +42,7 @@ from ream.helper import (
     to_serde_compression,
 )
 from serde.helper import get_filepath, get_open_fn
-from sm.misc.funcs import get_decoder
+from sm.misc.funcs import KnownSizeIntegerEncoder, get_decoder
 from tqdm import tqdm
 from typing_extensions import Self
 
@@ -226,7 +227,7 @@ class NumpyDataModel(DataSerdeMixin):
         """
         metadata: NumpyDataModelMetadata = self._metadata  # type: ignore
         sortedvalue = getattr(self, sortby)
-        sortedindex = np.argsort(sortedvalue, kind=kind)
+        sortedindex = np.argsort(sortedvalue[i:j], kind=kind)
         if sortorder == "desc":
             sortedindex = sortedindex[::-1]
 
@@ -800,7 +801,7 @@ class SingleNumpyArray(NumpyDataModel):
         self.value = value
 
     def __getitem__(self, idx: int | slice):
-        if isinstance(idx, slice):
+        if not isinstance(idx, int):
             return self.__class__(self.value[idx])
         return self.value[idx]
 
@@ -809,14 +810,14 @@ class EncodedSingleNumpyArray(NumpyDataModel):
     __slots__ = ["decoder", "value"]
 
     decoder: list[str]
-    value: NDArray[Shape["*"], Any]
+    value: NDArray[Shape["*"], Int32]
 
-    def __init__(self, decoder: list[str], value: NDArray[Shape["*"], Any]):
+    def __init__(self, decoder: list[str], value: NDArray[Shape["*"], Int32]):
         self.decoder = decoder
         self.value = value
 
     def __getitem__(self, idx: int | slice):
-        if isinstance(idx, slice):
+        if not isinstance(idx, int):
             return self.__class__(self.decoder, self.value[idx])
         return self.value[idx]
 
@@ -845,6 +846,10 @@ class EncodedSingleNumpyArray(NumpyDataModel):
 
         return EncodedSingleNumpyArray(get_decoder(encoder), new_arr)
 
+    @staticmethod
+    def from_known_size_integer_encoder(int_encoder: KnownSizeIntegerEncoder):
+        return EncodedSingleNumpyArray(int_encoder.get_decoder(), int_encoder.values)
+
     def to_list(self):
         return [self.decoder[val] for val in self.value]
 
@@ -856,6 +861,11 @@ class Single2DNumpyArray(NumpyDataModel):
 
     def __init__(self, value: NDArray[Shape["*,*"], Any]):
         self.value = value
+
+    def __getitem__(self, idx: int | slice):
+        if not isinstance(idx, int):
+            return self.__class__(self.value[idx])
+        return self.value[idx]
 
 
 @dataclass
@@ -880,13 +890,13 @@ class EncodedSingleMasked2DNumpyArray(NumpyDataModel):
     __slots__ = ["decoder", "value", "mask"]
 
     decoder: list[str]
-    value: NDArray[Shape["*,*"], Number]
+    value: NDArray[Shape["*,*"], Int32]
     mask: NDArray[Shape["*,*"], Bool]
 
     def __init__(
         self,
         decoder: list[str],
-        value: NDArray[Shape["*,*"], Number],
+        value: NDArray[Shape["*,*"], Int32],
         mask: NDArray[Shape["*,*"], Bool],
     ):
         self.decoder = decoder
@@ -894,7 +904,7 @@ class EncodedSingleMasked2DNumpyArray(NumpyDataModel):
         self.mask = mask
 
     def __getitem__(self, idx: int | slice):
-        if isinstance(idx, slice):
+        if not isinstance(idx, int):
             return self.__class__(self.decoder, self.value[idx], self.mask[idx])
         return self.value[idx], self.mask[idx]
 
@@ -958,7 +968,7 @@ DictNumpyArray.init()
 
 
 def ser_dict_array(
-    odict: dict[str, DataSerdeMixin],
+    odict: Mapping[str, DataSerdeMixin],
     loc: Path,
     compression: Optional[Compression] = None,
 ):

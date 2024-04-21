@@ -42,7 +42,6 @@ from ream.helper import (
     to_serde_compression,
 )
 from serde.helper import get_filepath, get_open_fn
-from sm.misc.funcs import KnownSizeIntegerEncoder, get_decoder
 from tqdm import tqdm
 from typing_extensions import Self
 
@@ -1006,3 +1005,30 @@ def to_pyarrow_compression(
         return map[compression]
 
     raise Exception(f"Not supported compression: {compression}")
+
+
+V = TypeVar("V")
+
+
+class KnownSizeIntegerEncoder:
+    def __init__(self, encoder: dict[str | tuple[str, ...], int], size: int):
+        self.encoder = encoder
+        self.values = np.zeros(size, dtype=np.int32)
+
+    def __setitem__(self, idx: int | slice, val: str | tuple[str, ...]):
+        if val not in self.encoder:
+            self.encoder[val] = len(self.encoder)
+        self.values[idx] = self.encoder[val]
+
+    def get_decoder(self) -> list:
+        return get_decoder(self.encoder)
+
+
+def get_decoder(encoder: dict[V, int]) -> list[V]:
+    counter = 0
+    output = []
+    for key, val in encoder.items():
+        assert val == counter, (val, counter)
+        counter += 1
+        output.append(key)
+    return output

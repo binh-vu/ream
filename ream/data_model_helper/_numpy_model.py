@@ -867,6 +867,41 @@ class Single2DNumpyArray(NumpyDataModel):
         return self.value[idx]
 
 
+class SingleNDNumpyArray(DataSerdeMixin):
+    __slots__ = ["value"]
+
+    value: NDArray[Shape["*,*"], Any]
+
+    def __init__(self, value: NDArray[Shape["*,*"], Any]):
+        self.value = value
+
+    def __getitem__(self, idx: int | slice):
+        if not isinstance(idx, int):
+            return self.__class__(self.value[idx])
+        return self.value[idx]
+
+    def save(
+        self,
+        loc: Path,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ) -> None:
+        loc.mkdir(exist_ok=True, parents=True)
+        if compression is None:
+            np.save(loc / "data.npy", self.value)
+        else:
+            np.savez_compressed(loc / "data.npz", value=self.value)
+
+    @classmethod
+    def load(cls, loc: Path, compression: Optional[Compression] = None) -> Self:
+        (file,) = loc.glob("data.np*")
+        out = np.load(file)
+        if "value" in out:
+            return cls(out["value"])
+        assert isinstance(out, np.ndarray), type(out)
+        return cls(out)
+
+
 @dataclass
 class SingleLevelIndexedNumpyArray(NumpyDataModel):
     __slots__ = ["index", "value"]

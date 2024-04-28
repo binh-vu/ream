@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add SingleNDNumpyArray to save high dimensional array
+
 ## [4.3.1] - 2024-04-21
 
 ### Fixed

@@ -8,6 +8,10 @@
 - Better error message for duplicated actors' parameters
 - Support primitive dictionary in actor_state
 
+### Changed
+
+- Use serde.csv in Cache.file.csv
+
 ## [4.3.1] - 2024-04-21
 
 ### Fixed

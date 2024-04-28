@@ -40,7 +40,8 @@ from loguru import logger
 from ream.data_model_helper import DataSerdeMixin
 from ream.fs import FS
 from ream.helper import Compression, ContextContainer, orjson_dumps
-from serde.helper import DEFAULT_ORJSON_OPTS, JsonSerde, _orjson_default, orjson_dumps
+from serde.helper import DEFAULT_ORJSON_OPTS as DEFAULT_SERDE_ORJSON_OPTS
+from serde.helper import JsonSerde, _orjson_default, orjson_dumps
 from timer import Timer
 from typing_extensions import Self
 
@@ -49,6 +50,7 @@ try:
 except ImportError:
     lz4_frame = None
 
+DEFAULT_ORJSON_OPTS = DEFAULT_SERDE_ORJSON_OPTS | orjson.OPT_SERIALIZE_NUMPY
 NoneType = type(None)
 # arguments are (self, *args, **kwargs)
 CacheKeyFn = Callable[..., bytes]
@@ -69,7 +71,7 @@ class SqliteBackendFactory:
     def pickle(
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
-        log_serde_time: bool = False,
+        log_serde_time: bool | str = False,
     ):
         backend = SqliteBackend(
             ser=pickle.dumps,
@@ -82,7 +84,7 @@ class SqliteBackendFactory:
     def json(
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
-        log_serde_time: bool = False,
+        log_serde_time: bool | str = False,
         cls: Optional[Type[JsonSerde]] = None,
         indent: Literal[0, 2] = 0,
     ):
@@ -115,7 +117,7 @@ class ClsSerdeBackendFactory:
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         fileext: Optional[str | list[str]] = None,
-        log_serde_time: bool = False,
+        log_serde_time: bool | str = False,
     ):
         assert fileext is None or isinstance(fileext, str)
         ser = cls.ser
@@ -139,7 +141,7 @@ class ClsSerdeBackendFactory:
         dirname: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
-        log_serde_time: bool = False,
+        log_serde_time: bool | str = False,
     ):
         if isinstance(cls, Sequence):
             obj = ClsSerdeBackendFactory.get_tuple_serde(cls, None)
@@ -213,7 +215,7 @@ class FileBackendFactory:
         filename: Optional[Union[str, Callable[..., str]]] = None,
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
-        log_serde_time: bool = False,
+        log_serde_time: bool | str = False,
     ):
         backend = FileBackend(
             ser=pickle.dumps,
@@ -230,11 +232,18 @@ class FileBackendFactory:
         delimiter: str = ",",
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
-        log_serde_time: bool = False,
+        log_serde_time: bool | str = False,
+        deser_as_record: bool = False,
+        dtype: Optional[dict[Union[str, int], Callable[[str], Any]]] = None,
     ):
         backend = FileBackend(
             ser=FileBackendFactory.csv_ser,
-            deser=FileBackendFactory.csv_deser,
+            deser=partial(
+                FileBackendFactory.csv_deser,
+                delimiter=delimiter,
+                deser_as_record=deser_as_record,
+                dtype=dtype,
+            ),
             filename=filename,
             fileext="csv",
             compression=compression,
@@ -247,7 +256,7 @@ class FileBackendFactory:
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         cls: Optional[Type[JsonSerde]] = None,
-        log_serde_time: bool = False,
+        log_serde_time: bool | str = False,
     ):
         backend = FileBackend(
             ser=FileBackendFactory.jl_ser,
@@ -268,7 +277,7 @@ class FileBackendFactory:
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
         cls: Optional[Type[JsonSerde]] = None,
-        log_serde_time: bool = False,
+        log_serde_time: bool | str = False,
         indent: Literal[0, 2] = 0,
     ):
         backend = FileBackend(
@@ -320,32 +329,29 @@ class FileBackendFactory:
 
     @staticmethod
     def csv_ser(
-        obj: list[dict[str, str]] | list[list[str]],
+        rows: list[dict[str, str | bool | int | float]] | list[list[str]],
         delimiter: str = ",",
     ):
-        if len(obj) == 0:
+        if len(rows) == 0:
             return b""
 
         f = StringIO()
-        writer = csv.writer(
-            f, delimiter=delimiter, quoting=csv.QUOTE_MINIMAL, lineterminator="\n"
-        )
-
-        if isinstance(obj[0], dict):
-            keys = list(obj[0].keys())
-            writer.writerow(keys)
-            for row in cast(list[dict[str, str]], obj):
-                writer.writerow((row[key] for key in keys))
-        else:
-            for row in obj:
-                writer.writerow(row)
+        serde.csv.ser(rows, f, delimiter=delimiter)
         return f.getvalue().encode()
 
     @staticmethod
-    def csv_deser(data: bytes, delimiter: str = ","):
+    def csv_deser(
+        data: bytes,
+        delimiter: str = ",",
+        deser_as_record: bool = False,
+        dtype: Optional[dict[str | int, Callable[[str], Any]]] = None,
+    ):
+        if data == b"":
+            return []
         f = StringIO(data.decode())
-        reader = csv.reader(f, delimiter=delimiter)
-        return list(reader)
+        return serde.csv.deser(
+            f, delimiter=delimiter, deser_as_record=deser_as_record, dtype=dtype
+        )
 
     @staticmethod
     def jl_ser(
@@ -820,6 +826,8 @@ class Backend(ABC):
             # using lambda somehow terminate the program without raising an error
             ser = Chain2(lz4_frame.compress, ser)
             deser = Chain2(deser, lz4_frame.decompress)
+        else:
+            assert compression is None, compression
 
         self.compression = compression
         self.ser = ser
@@ -1151,9 +1159,10 @@ class ReplicatedBackends(Backend):
 
 
 class LogSerdeTimeBackend(Backend):
-    def __init__(self, backend: Backend):
+    def __init__(self, backend: Backend, name: str = ""):
         self.backend = backend
         self.logger: Logger = None  # type: ignore
+        self.name = name + " " if len(name) > 0 else name
 
     def postinit(self, func: Callable, args_helper: CacheArgsHelper):
         self.backend.postinit(func, args_helper)
@@ -1171,14 +1180,14 @@ class LogSerdeTimeBackend(Backend):
 
     def get(self, key: bytes) -> Value:
         with Timer().watch_and_report(
-            f"deserialize",
+            f"{self.name}deserialize",
             self.logger.debug,
         ):
             return self.backend.get(key)
 
     def set(self, key: bytes, value: Value) -> None:
         with Timer().watch_and_report(
-            f"serialize",
+            f"{self.name}serialize",
             self.logger.debug,
         ):
             self.backend.set(key, value)
@@ -1286,10 +1295,12 @@ def unwrap_cache_decorators(cls: type, methods: list[str] | None = None):
 def wrap_backend(
     backend: Backend,
     mem_persist: Optional[Union[MemBackend, bool]],
-    log_serde_time: bool,
+    log_serde_time: str | bool,
 ):
     if log_serde_time:
-        backend = LogSerdeTimeBackend(backend)
+        backend = LogSerdeTimeBackend(
+            backend, name="" if isinstance(log_serde_time, bool) else log_serde_time
+        )
     if mem_persist:
         if mem_persist is not None:
             mem_persist = MemBackend()

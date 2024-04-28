@@ -11,6 +11,7 @@ from ream.data_model_helper._numpy_model import (
     NumpyDataModelMetadata,
     Single2DNumpyArray,
     SingleLevelIndexedNumpyArray,
+    SingleNDNumpyArray,
     SingleNumpyArray,
     deser_dict_array,
     ser_dict_array,
@@ -46,6 +47,7 @@ __all__ = [
     "SingleLevelIndexedPLDataFrame",
     "SinglePolarDataFrame",
     "DictList",
+    "SingleNDNumpyArray",
     "ser_dict_array",
     "deser_dict_array",
 ]

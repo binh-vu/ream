@@ -6,10 +6,9 @@ from pathlib import Path
 from typing import Optional, get_origin, get_type_hints
 
 import serde.pickle
+from ream.helper import Compression, to_serde_compression
 from serde.helper import get_filepath
 from typing_extensions import Self
-
-from ream.helper import Compression, to_serde_compression
 
 
 class DataSerdeMixin(ABC):
@@ -19,13 +18,11 @@ class DataSerdeMixin(ABC):
         loc: Path,
         compression: Optional[Compression] = None,
         compression_level: Optional[int] = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @classmethod
     @abstractmethod
-    def load(cls, loc: Path, compression: Optional[Compression] = None) -> Self:
-        ...
+    def load(cls, loc: Path, compression: Optional[Compression] = None) -> Self: ...
 
 
 @dataclass

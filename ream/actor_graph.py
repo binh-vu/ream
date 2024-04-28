@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, is_dataclass
 from inspect import Parameter, signature
@@ -280,8 +281,11 @@ class ActorGraph(RetworkXDiGraph[int, ActorNode, ActorEdge]):
             type2arg = {type(arg): arg for arg in args}
             n_no_params = sum(1 for arg in args if isinstance(arg, NoParams))
             if len(type2arg) != len(args) - (n_no_params - 1 if n_no_params > 1 else 0):
+                dup_param_cls = [
+                    k for k, v in Counter((type(arg) for arg in args)).items() if v > 1
+                ]
                 raise ValueError(
-                    "Cannot create actor from list of parameter instances because there are duplicated parameter classes (ream.params_helper.NoParams does not count)."
+                    f"Cannot create actor from list of parameter instances because there are duplicated parameter classes (ream.params_helper.NoParams does not count): {dup_param_cls}."
                 )
             type2arg[NoParams] = NoParams()
             params = [type2arg[param_cls] for param_cls in constructor.params_cls]

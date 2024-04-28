@@ -60,7 +60,10 @@ class ActorState:
         if isinstance(self.params, list):
             params = [param_as_dict(p) for p in self.params]
         elif isinstance(self.params, dict):
-            params = {k: param_as_dict(v) for k, v in self.params.items()}
+            params = {
+                k: v if isinstance(v, (str, int, bool)) else param_as_dict(v)
+                for k, v in self.params.items()
+            }
         elif hasattr(self.params, "to_dict"):
             params = self.params.to_dict()
         else:

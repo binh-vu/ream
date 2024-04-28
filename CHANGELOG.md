@@ -5,10 +5,8 @@
 ### Added
 
 - Add SingleNDNumpyArray to save high dimensional array
-
-### Changed
-
 - Better error message for duplicated actors' parameters
+- Support primitive dictionary in actor_state
 
 ## [4.3.1] - 2024-04-21
 

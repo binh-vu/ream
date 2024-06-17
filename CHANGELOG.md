@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [4.3.2] - 2024-06-17
 
 ### Added
 
@@ -11,6 +11,7 @@
 ### Changed
 
 - Use serde.csv in Cache.file.csv
+- Update `python-slugify`
 
 ## [4.3.1] - 2024-04-21
 

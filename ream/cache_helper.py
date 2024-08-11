@@ -71,11 +71,13 @@ class SqliteBackendFactory:
     def pickle(
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
+        filename: Optional[str | Callable[..., str]] = None,
         log_serde_time: bool | str = False,
     ):
         backend = SqliteBackend(
             ser=pickle.dumps,
             deser=pickle.loads,
+            filename=filename,
             compression=compression,
         )
         return wrap_backend(backend, mem_persist, log_serde_time)
@@ -84,6 +86,7 @@ class SqliteBackendFactory:
     def json(
         compression: Optional[Compression] = None,
         mem_persist: Optional[Union[MemBackend, bool]] = None,
+        filename: Optional[str | Callable[..., str]] = None,
         log_serde_time: bool | str = False,
         cls: Optional[Type[JsonSerde]] = None,
         indent: Literal[0, 2] = 0,
@@ -102,6 +105,7 @@ class SqliteBackendFactory:
                 if cls is None
                 else partial(FileBackendFactory.json_deser_cls, cls)
             ),
+            filename=filename,
             compression=compression,
         )
         return wrap_backend(backend, mem_persist, log_serde_time)
@@ -810,7 +814,7 @@ class Backend(ABC):
         deser: Callable[[bytes], Value],
         compression: Optional[Compression] = None,
     ):
-        if compression == "gz":
+        if compression == "gzip":
             origin_ser = ser
             origin_deser = deser
             ser = lambda x: gzip.compress(origin_ser(x), mtime=0)
@@ -1071,9 +1075,23 @@ class DirBackend(Backend):
 
 
 class SqliteBackend(Backend):
+    def __init__(
+        self,
+        ser: Callable[[Any], bytes],
+        deser: Callable[[bytes], Any],
+        filename: Optional[str | Callable[..., str]] = None,
+        compression: Optional[Compression] = None,
+    ):
+        super().__init__(ser, deser, compression)
+        self.filename = filename
+
     def postinit(self, func: Callable, args_helper: CacheArgsHelper):
         super().postinit(func, args_helper)
-        self.dbname = f"{func.__name__}.sqlite"
+        if self.filename is None:
+            self.filename = func.__name__
+        elif isinstance(self.filename, str) and is_template_str(self.filename):
+            self.filename = args_helper.get_string_template_func(self.filename)
+        self.dbname = f"{self.filename}.sqlite"
         self.dbconn: SqliteDict = None  # type: ignore
 
     @contextmanager

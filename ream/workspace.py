@@ -32,11 +32,13 @@ class ReamWorkspace:
         return ReamWorkspace.instance
 
     @staticmethod
-    def init(workdir: Union[Path, str]):
+    def init(workdir: Union[Path, str], verbose: bool = True):
         if ReamWorkspace.instance is not None:
             # allow calling re-initialization if the workdir is the same
             assert ReamWorkspace.instance.workdir == Path(workdir)
         else:
+            if verbose:
+                logger.info("ReamWorkspace: {}", workdir)
             ReamWorkspace.instance = ReamWorkspace(workdir)
         return ReamWorkspace.instance
 
@@ -103,6 +105,8 @@ class ReamWorkspace:
 
     def register_base_paths(self, **kwargs: Path):
         for prefix, basepath in kwargs.items():
+            if prefix in self.registered_base_paths:
+                assert self.registered_base_paths[prefix] == Path(basepath)
             self.registered_base_paths[prefix] = Path(basepath)
 
     def get_rel_path(self, path: Path) -> str:

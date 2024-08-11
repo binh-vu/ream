@@ -1,11 +1,14 @@
 from __future__ import annotations
+
 import os
 from copy import deepcopy
 from dataclasses import Field, asdict, dataclass, field, fields, is_dataclass, replace
 from functools import partial
-from typing import Any, Dict, List, Optional, Type, Union
 from pathlib import Path, PosixPath, WindowsPath
+from typing import Any, Dict, List, Optional, Type, Union
+
 import orjson
+from ream.helper import get_classpath
 from ream.workspace import ReamWorkspace
 
 DataClassInstance = Any
@@ -105,13 +108,35 @@ class EnumParams:
 class PluginParams:
     """For specifying a class method from string"""
 
-    clspath: str
-    clsargs: dict = field(default_factory=dict, metadata={"parser": orjson.loads})
+    clspath: str | type
+    clsargs: dict | object = field(
+        default_factory=dict, metadata={"parser": orjson.loads}
+    )
+
+    def to_dict(self):
+        result = []
+        for f in fields(self):
+            fv = getattr(self, f.name)
+            if f.name == "clspath":
+                if isinstance(fv, type):
+                    fv = get_classpath(fv)
+                else:
+                    assert isinstance(fv, str)
+            elif f.name == "clsargs":
+                if not isinstance(fv, dict):
+                    assert is_dataclass(fv)
+                    fv = param_as_dict(fv)
+            value = _param_as_dict_inner(fv, dict)
+            result.append((f.name, value))
+        return dict(result)
 
 
-BasePath = WindowsPath if os.name == 'nt' else PosixPath
+BasePath = WindowsPath if os.name == "nt" else PosixPath
+
+
 class RelWorkdirPath(BasePath):
     """A path when serialized will be converted to a relative path to the working directory."""
+
     pass
 
 

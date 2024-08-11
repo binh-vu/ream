@@ -1,5 +1,11 @@
 # Changelog
 
+## [4.4.0] - 2024-08-10
+
+### Added
+
+- Users can customize Sqlite database name
+
 ## [4.3.2] - 2024-06-17
 
 ### Added

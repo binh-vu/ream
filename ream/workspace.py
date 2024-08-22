@@ -107,6 +107,7 @@ class ReamWorkspace:
         for prefix, basepath in kwargs.items():
             if prefix in self.registered_base_paths:
                 assert self.registered_base_paths[prefix] == Path(basepath)
+            logger.info("Register base path: {} -> {}", prefix, basepath)
             self.registered_base_paths[prefix] = Path(basepath)
 
     def get_rel_path(self, path: Path) -> str:

@@ -5,6 +5,7 @@ import struct
 from copy import deepcopy
 from dataclasses import dataclass, field, fields, is_dataclass
 from functools import partial
+from io import BytesIO
 from pathlib import Path
 from typing import (
     Any,
@@ -288,6 +289,48 @@ class NumpyDataModel(DataSerdeMixin):
                     f.write(struct.pack("<I", len(serindex)))
                     f.write(serindex)
 
+    def ser(
+        self,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ) -> bytes:
+        """Save the data model to a byte string"""
+        metadata = self._metadata
+        if metadata is None:
+            raise Exception(
+                f"{self.__class__.__qualname__}.init() must be called before usage to finish setting up the schema"
+            )
+
+        cols = {name: getattr(self, name) for name in metadata.array_props}
+        for name in metadata.array2d_props:
+            array2d = cols[name]
+            cols.pop(name)
+            for i in range(array2d.shape[1]):
+                cols[f"{name}_{i}"] = array2d[:, i]
+
+        data = BytesIO()
+
+        if len(metadata.index_props) > 0:
+            data.write(struct.pack("<I", len(metadata.index_props)))
+            for i, name in enumerate(metadata.index_props):
+                if metadata.index_prop_idxs[i][1] is not None:
+                    serindex = getattr(self, name).to_bytes()
+                else:
+                    serindex = metadata.default_serdict(getattr(self, name))
+                data.write(struct.pack("<I", len(serindex)))
+                data.write(serindex)
+        else:
+            data.write(struct.pack("<I", 0))
+
+        pq.write_table(
+            pa.table(cols),
+            data,
+            compression=to_pyarrow_compression(compression),
+            compression_level=compression_level,
+        )
+
+        return data.getvalue()
+
     @classmethod
     def batch_save(
         cls,
@@ -331,6 +374,67 @@ class NumpyDataModel(DataSerdeMixin):
                     indices.append(index)
 
         tbl = pq.read_table(loc / "data.parq")
+        kwargs = {}
+        if len(metadata.array2d_props) == 0:
+            for name in metadata.array_props:
+                kwargs[name] = tbl.column(name).to_numpy()
+        else:
+            columns: List[str] = tbl.column_names
+            for name in metadata.array2d_props:
+                newcols = []
+                names = []
+                for col in columns:
+                    if col.startswith(name):
+                        names.append(col)
+                    else:
+                        newcols.append(col)
+                names.sort(key=lambda x: int(x.replace(name + "_", "")))
+                array2d = np.stack([tbl.column(s).to_numpy() for s in names], axis=1)
+                kwargs[name] = array2d
+                columns = newcols
+
+            for name in columns:
+                kwargs[name] = tbl.column(name).to_numpy()
+
+        if len(indices) > 0 or len(kwargs) < len(cls.__slots__):
+            # the two conditions should always equal, we can use one of them
+            # but we check to ensure data is valid
+            assert len(indices) > 0 and len(kwargs) < len(
+                cls.__slots__
+            ), "The serialized data is inconsistent with the schema"
+            i = 0
+            for name in cls.__slots__:
+                if name not in kwargs:
+                    kwargs[name] = indices[i]
+                    i += 1
+
+        return cls(**kwargs)
+
+    @classmethod
+    def deser(cls, data: bytes):
+        metadata = cls._metadata
+        if metadata is None:
+            raise Exception(
+                f"{cls.__qualname__}.init() must be called before usage to finish setting up the schema"
+            )
+
+        indices = []
+
+        cursor = 0
+        n_indices = struct.unpack("<I", data[cursor : cursor + 4])[0]
+        cursor += 4
+        for i in range(n_indices):
+            size = struct.unpack("<I", data[cursor : cursor + 4])[0]
+            cursor += 4
+            index_type = metadata.index_prop_idxs[i][1]
+            if index_type is not None:
+                index = index_type.from_bytes(data[cursor : cursor + size])
+            else:
+                index = metadata.default_deserdict(data[cursor : cursor + size])
+            cursor += size
+            indices.append(index)
+
+        tbl = pq.read_table(BytesIO(data[cursor:]))
         kwargs = {}
         if len(metadata.array2d_props) == 0:
             for name in metadata.array_props:

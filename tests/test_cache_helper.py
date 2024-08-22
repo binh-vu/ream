@@ -9,7 +9,6 @@ from typing import List, Optional
 
 import pytest
 import serde.pickle
-
 from ream.cache_helper import (
     Backend,
     Cache,
@@ -224,7 +223,7 @@ class TestCacheHelper:
 
         return MyCacheFn
 
-    @pytest.fixture(params=[None, "gz", "bz2"] + (["lz4"] if has_lz4() else []))
+    @pytest.fixture(params=[None, "gzip", "bz2"] + (["lz4"] if has_lz4() else []))
     def compression(self, request):
         return request.param
 
@@ -241,14 +240,18 @@ class TestCacheHelper:
             return DirBackend(
                 ser=lambda value, path, compression: serde.pickle.ser(
                     value,
-                    path / f"data.pkl.{compression}"
-                    if compression is not None
-                    else path / "data.pkl",
+                    (
+                        path / f"data.pkl.{compression}"
+                        if compression is not None
+                        else path / "data.pkl"
+                    ),
                 ),
                 deser=lambda path, compression: serde.pickle.deser(
-                    path / f"data.pkl.{compression}"
-                    if compression is not None
-                    else path / "data.pkl",
+                    (
+                        path / f"data.pkl.{compression}"
+                        if compression is not None
+                        else path / "data.pkl"
+                    ),
                 ),
                 compression=compression,
             )

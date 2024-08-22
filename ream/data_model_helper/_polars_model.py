@@ -3,6 +3,7 @@ from __future__ import annotations
 import pickle
 import struct
 from dataclasses import dataclass, fields, is_dataclass
+from io import BytesIO
 from pathlib import Path
 from typing import (
     Any,
@@ -19,11 +20,11 @@ from typing import (
 import orjson
 import polars as pl
 from polars.type_aliases import ParquetCompression
-from serde.helper import get_filepath, get_open_fn
-
 from ream.data_model_helper._container import DataSerdeMixin
 from ream.data_model_helper._index import Index
+from ream.data_model_helper._io_helper import fread, fwrite
 from ream.helper import Compression, has_dict_with_nonstr_keys, to_serde_compression
+from serde.helper import get_filepath, get_open_fn
 
 
 @dataclass
@@ -144,6 +145,42 @@ class PolarDataModel(DataSerdeMixin):
                     f.write(struct.pack("<I", len(serindex)))
                     f.write(serindex)
 
+    def ser(
+        self,
+        compression: Optional[Compression] = None,
+        compression_level: Optional[int] = None,
+    ) -> bytes:
+        metadata = self._metadata
+        if metadata is None:
+            raise Exception(
+                f"{self.__class__.__qualname__}.init() must be called before usage to finish setting up the schema"
+            )
+
+        f = fwrite(BytesIO())
+
+        if len(metadata.index_props) > 0:
+            f.write_int(len(metadata.index_props))
+            for i, name in enumerate(metadata.index_props):
+                if metadata.index_prop_idxs[i][1] is not None:
+                    serindex = getattr(self, name).to_bytes()
+                else:
+                    serindex = metadata.default_serdict(getattr(self, name))
+                f.write_ser_obj(serindex)
+
+        f.write_int(len(metadata.df_props))
+        for name in metadata.df_props:
+            df: pl.DataFrame = getattr(self, name)
+            tmp = BytesIO()
+            df.write_parquet(
+                tmp,
+                compression=to_polar_compression(compression),
+                compression_level=compression_level,
+            )
+            f.write_ser_obj(tmp.getvalue())
+
+        f.flush()
+        return f.stream.getvalue()
+
     @classmethod
     def load(cls, loc: Path, compression: Optional[Compression] = None):
         metadata = cls._metadata
@@ -173,6 +210,34 @@ class PolarDataModel(DataSerdeMixin):
             df = pl.read_parquet(loc / f"{name}.parq")
             kwargs[name] = df
 
+        return cls(**kwargs)
+
+    @classmethod
+    def deser(cls, data: bytes):
+        metadata = cls._metadata
+        if metadata is None:
+            raise Exception(
+                f"{cls.__qualname__}.init() must be called before usage to finish setting up the schema"
+            )
+
+        f = fread(data)
+        kwargs = {}
+
+        if len(metadata.index_props) > 0:
+            n_indices = f.read_int()
+            for i in range(n_indices):
+                index_type = metadata.index_prop_idxs[i][1]
+                if index_type is not None:
+                    index = index_type.from_bytes(f.read_ser_obj())
+                else:
+                    index = metadata.default_deserdict(f.read_ser_obj())
+                kwargs[metadata.index_props[i]] = index
+
+        for name in metadata.df_props:
+            df = pl.read_parquet(f.read_ser_obj())
+            kwargs[name] = df
+
+        assert f.is_eof()
         return cls(**kwargs)
 
 

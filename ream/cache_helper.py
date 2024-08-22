@@ -50,6 +50,8 @@ try:
 except ImportError:
     lz4_frame = None
 
+# from h5py import Empty, File, Group
+
 DEFAULT_ORJSON_OPTS = DEFAULT_SERDE_ORJSON_OPTS | orjson.OPT_SERIALIZE_NUMPY
 NoneType = type(None)
 # arguments are (self, *args, **kwargs)
@@ -105,6 +107,25 @@ class SqliteBackendFactory:
                 if cls is None
                 else partial(FileBackendFactory.json_deser_cls, cls)
             ),
+            filename=filename,
+            compression=compression,
+        )
+        return wrap_backend(backend, mem_persist, log_serde_time)
+
+    @staticmethod
+    def serde(
+        cls: type[SerdeProtocol],  # type: ignore
+        compression: Optional[Compression] = None,
+        mem_persist: Optional[Union[MemBackend, bool]] = None,
+        filename: Optional[str | Callable[..., str]] = None,
+        log_serde_time: bool | str = False,
+    ):
+        ser = cls.ser
+        deser = cls.deser
+
+        backend = SqliteBackend(
+            ser=ser,
+            deser=deser,
             filename=filename,
             compression=compression,
         )
@@ -393,10 +414,32 @@ class FileBackendFactory:
         return [clz.from_dict(orjson.loads(line)) for line in data.splitlines()]
 
 
+# class HDF5BackendFactory:
+
+#     @staticmethod
+#     def serde(
+#         cls: type[SerdeProtocol],
+#         compression: Optional[Compression] = None,
+#         mem_persist: Optional[Union[MemBackend, bool]] = None,
+#         filename: Optional[str] = None,
+#         log_serde_time: bool | str = False,
+#     ):
+#         ser = cls.ser
+#         deser = cls.deser
+#         backend = HDF5Backend(
+#             ser=ser,
+#             deser=deser,
+#             filename=filename,
+#             compression=compression,
+#         )
+#         return wrap_backend(backend, mem_persist, log_serde_time)
+
+
 class Cache:
     file = FileBackendFactory
     sqlite = SqliteBackendFactory
     cls = ClsSerdeBackendFactory
+    # hdf5 = HDF5BackendFactory
 
     @staticmethod
     def cache(
@@ -460,6 +503,9 @@ class Cache:
         cache_self_args: Optional[str | Callable[..., dict]] = None,
         cache_ser_args: Optional[dict[str, ArgSer]] = None,
         cache_key: Optional[CacheKeyFn] = None,
+        flat_input: Optional[Callable[..., tuple]] = None,
+        unflat_input: Optional[Callable[..., tuple]] = None,
+        flatten_all_input: bool = False,  # if True, we flatten all input arguments, otherwise, we expect only one sequence argument
         flat_output: Optional[Callable[..., list]] = None,
         unflat_output: Optional[Callable[..., Any]] = None,
         disable: bool | str | Callable[[Any], bool] = False,
@@ -477,76 +523,111 @@ class Cache:
             if cache_args is not None:
                 cache_args_helper.keep_args(cache_args)
 
-            # since we flatten the input & output, we check the args to make sure we have only one
-            # arg of type of sequence.
-            seq_arg_name = None
-            seq_arg_index = 0
-            for i, (name, argtype) in enumerate(cache_args_helper.argtypes.items()):
-                if (
-                    argtype is not None
-                    and (origin_argtype := get_origin(argtype)) is not None
-                    and issubclass(origin_argtype, Sequence)
-                ):
-                    assert seq_arg_name is None
-                    assert (
-                        len(get_args(argtype)) == 1
-                    )  # this is likely redundant because the annotation is usually Sequence[T]
-                    seq_arg_name = name
-                    seq_arg_index = i
-            assert seq_arg_name is not None
-
             keyfn = cache_key
-            if keyfn is None:
-                # now we have only one sequence arg, we go ahead and change it to its item type
-                cache_args_helper.argtypes[seq_arg_name] = get_args(
-                    cache_args_helper.argtypes[seq_arg_name]
-                )[0]
+            if flat_input is None or unflat_input is None:
+                # since we flatten the input & output automatically, we check the args to make sure we have only one
+                # arg of type of sequence.
+                seq_arg_names = []
+                seq_arg_indices = []
+                for i, (name, argtype) in enumerate(cache_args_helper.argtypes.items()):
+                    if (
+                        argtype is not None
+                        and (origin_argtype := get_origin(argtype)) is not None
+                        and issubclass(origin_argtype, Sequence)
+                    ):
+                        assert (
+                            len(get_args(argtype)) == 1
+                        )  # this is likely redundant because the annotation is usually Sequence[T]
+                        seq_arg_names.append(name)
+                        seq_arg_indices.append(i)
 
-                # ensure that we can generate a cache key function
-                cache_args_helper.ensure_auto_cache_key_friendly()
-                keyfn = lambda self, *args, **kwargs: orjson_dumps(
-                    cache_args_helper.get_args(self, *args, **kwargs)
-                )
+                assert len(seq_arg_names) > 0
+                if not flatten_all_input and len(seq_arg_names) > 1:
+                    raise ValueError(
+                        f"We expect only one sequence argument, but got {seq_arg_names}. "
+                        "Set flatten_all_input=True to flatten all input arguments or provide your own flatten function for inputs."
+                    )
+
+                if keyfn is None:
+                    # now we have only one sequence arg, we go ahead and change it to its item type
+                    for seq_arg_name in seq_arg_names:
+                        cache_args_helper.argtypes[seq_arg_name] = get_args(
+                            cache_args_helper.argtypes[seq_arg_name]
+                        )[0]
+
+                    # ensure that we can generate a cache key function
+                    cache_args_helper.ensure_auto_cache_key_friendly()
+                    keyfn = lambda self, *args, **kwargs: orjson_dumps(
+                        cache_args_helper.get_args(self, *args, **kwargs)
+                    )
+            else:
+                assert keyfn is not None
 
             # now let generate flatten functions for input & output
-            def flat_inargs(self, *args, **kwargs):
-                lst_args = []
-                if len(args) > seq_arg_index:
-                    # seq arg is in the positional args
-                    for seq_val in args[seq_arg_index]:
-                        lst_args.append(
-                            (
-                                args[:seq_arg_index]
-                                + (seq_val,)
-                                + args[seq_arg_index + 1 :],
-                                kwargs,
-                            )
-                        )
-                    return lst_args
+            if flat_input is None:
+                if len(seq_arg_indices) == 1:
+                    seq_arg_index = seq_arg_indices[0]
+                    seq_arg_name = seq_arg_names[0]
 
-                # seq arg is in the keyword args
-                for seq_val in kwargs[seq_arg_name]:
-                    new_kwargs = kwargs.copy()
-                    new_kwargs[seq_arg_name] = seq_val
-                    lst_args.append((args, new_kwargs))
-                return lst_args
+                    def default_flat_single_inargs(self, *args, **kwargs):
+                        lst_args = []
+                        if len(args) > seq_arg_index:
+                            # seq arg is in the positional args
+                            for seq_val in args[seq_arg_index]:
+                                lst_args.append(
+                                    (
+                                        args[:seq_arg_index]
+                                        + (seq_val,)
+                                        + args[seq_arg_index + 1 :],
+                                        kwargs,
+                                    )
+                                )
+                            return lst_args
 
-            def unflat_inargs(
-                self, lst_args: list[tuple[tuple | list, dict]]
-            ) -> tuple[tuple | list, dict]:
-                assert len(lst_args) > 0
+                        # seq arg is in the keyword args
+                        for seq_val in kwargs[seq_arg_name]:
+                            new_kwargs = kwargs.copy()
+                            new_kwargs[seq_arg_name] = seq_val
+                            lst_args.append((args, new_kwargs))
+                        return lst_args
 
-                args, kwargs = lst_args[0]
-                if len(args) > seq_arg_index:
-                    # seq arg is in the positional args
-                    args = list(args)
-                    args[seq_arg_index] = [pa[seq_arg_index] for pa, _ in lst_args]
-                    return args, kwargs
+                    flat_input_fn = default_flat_single_inargs
+                else:
+                    raise NotImplementedError()
+            else:
+                flat_input_fn = flat_input
 
-                # seq arg is in the keyword args
-                kwargs = kwargs.copy()
-                kwargs[seq_arg_name] = [pka[seq_arg_name] for _, pka in lst_args]
-                return args, kwargs
+            if unflat_input is None:
+                if len(seq_arg_indices) == 1:
+                    seq_arg_index = seq_arg_indices[0]
+                    seq_arg_name = seq_arg_names[0]
+
+                    def default_unflat_single_inargs(
+                        self, lst_args: list[tuple[tuple | list, dict]]
+                    ) -> tuple[tuple | list, dict]:
+                        assert len(lst_args) > 0
+
+                        args, kwargs = lst_args[0]
+                        if len(args) > seq_arg_index:
+                            # seq arg is in the positional args
+                            args = list(args)
+                            args[seq_arg_index] = [
+                                pa[seq_arg_index] for pa, _ in lst_args
+                            ]
+                            return args, kwargs
+
+                        # seq arg is in the keyword args
+                        kwargs = kwargs.copy()
+                        kwargs[seq_arg_name] = [
+                            pka[seq_arg_name] for _, pka in lst_args
+                        ]
+                        return args, kwargs
+
+                    unflat_input_fn = default_unflat_single_inargs
+                else:
+                    raise NotImplementedError()
+            else:
+                unflat_input_fn = unflat_input
 
             if flat_output is None:
 
@@ -579,7 +660,7 @@ class Cache:
                     if is_disable:
                         return func(self, *args, **kwargs)
 
-                lst_inargs = flat_inargs(self, *args, **kwargs)
+                lst_inargs = flat_input_fn(self, *args, **kwargs)
                 lst_inargs_keys = [
                     keyfn(self, *in_args, **in_kwargs)  # type: ignore
                     for in_args, in_kwargs in lst_inargs
@@ -605,14 +686,17 @@ class Cache:
 
                 if len(unfinished_jobs) > 0:
                     # finish the remaining jobs
-                    subargs, subkwargs = unflat_inargs(self, unfinished_jobs)
+                    subargs, subkwargs = unflat_input_fn(self, unfinished_jobs)
 
                     # call the function with unfinished_args
                     output = func(self, *subargs, **subkwargs)
 
                     # unroll the output and catch the unfinished args
                     flatten_output = flat_output_fn(self, output, unfinished_jobs)
-                    assert len(flatten_output) == len(unfinished_jobs)
+                    assert len(flatten_output) == len(unfinished_jobs), (
+                        len(flatten_output),
+                        len(unfinished_jobs),
+                    )
                     for unfinished_job, out, key in zip(
                         unfinished_jobs,
                         flatten_output,
@@ -1088,17 +1172,26 @@ class SqliteBackend(Backend):
     def postinit(self, func: Callable, args_helper: CacheArgsHelper):
         super().postinit(func, args_helper)
         if self.filename is None:
-            self.filename = func.__name__
+            self.filename = f"{func.__name__}.sqlite"
         elif isinstance(self.filename, str) and is_template_str(self.filename):
             self.filename = args_helper.get_string_template_func(self.filename)
-        self.dbname = f"{self.filename}.sqlite"
+
         self.dbconn: SqliteDict = None  # type: ignore
 
     @contextmanager
     def context(self, obj: HasWorkingFsTrait, *args, **kwargs):
         if self.dbconn is None:
+            if isinstance(self.filename, str):
+                filename = self.filename
+            else:
+                assert self.filename is not None
+                filename = self.filename(obj, *args, **kwargs)
+                assert (
+                    filename.find(".") != -1
+                ), "Must have file extension to be considered as a file"
+
             self.dbconn = SqliteDict(
-                obj.get_working_fs().root / self.dbname,
+                obj.get_working_fs().root / filename,
                 keytype=SqliteDictFieldType.bytes,
                 ser_value=identity,
                 deser_value=identity,
@@ -1114,6 +1207,48 @@ class SqliteBackend(Backend):
 
     def set(self, key: bytes, value: Any) -> None:
         self.dbconn[key] = self.ser(value)
+
+
+# class HDF5Backend(Backend):
+#     def __init__(
+#         self,
+#         ser: Callable[[Any], bytes],
+#         deser: Callable[[bytes], Any],
+#         filename: Optional[str] = None,
+#         compression: Optional[Compression] = None,
+#     ):
+#         super().__init__(ser, deser, compression)
+#         self.filename = filename
+#         self.container = ContextContainer()
+
+#     def postinit(self, func: Callable, args_helper: CacheArgsHelper):
+#         super().postinit(func, args_helper)
+#         if self.filename is None:
+#             self.filename = func.__name__
+#         self.filename = f"{self.filename}.hdf5"
+
+#     @contextmanager
+#     def context(self, obj: HasWorkingFsTrait, *args, **kwargs):
+#         assert self.filename is not None
+#         fpath = obj.get_working_fs().get(self.filename, key=None)
+
+#         with File(fpath, "r+") as f:
+#             try:
+#                 self.container.enable()
+#                 self.container.file = f
+#                 yield f
+#             finally:
+#                 self.container.file = None
+#                 self.container.disable()
+
+#     def has_key(self, key: bytes) -> bool:
+#         return key in self.container.file
+
+#     def get(self, key: bytes) -> Any:
+#         return self.deser(self.container.file[key])
+
+#     def set(self, key: bytes, value: Any) -> None:
+#         self.container.file[key] = self.ser(value)
 
 
 class ReplicatedBackends(Backend):

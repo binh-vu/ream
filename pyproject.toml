@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "ream2"
-version = "4.5.0"
-description = "An actor architecture for research software"
+version = "4.5.1"
+description = "(deprecated for libactor) An actor architecture for research software"
 authors = ["Binh Vu <binh@toan2.com>"]
 license = "MIT"
 readme = "README.md"
@@ -21,7 +21,6 @@ python-slugify = "^8.0.4"
 serde2 = "^1.6.0"
 hugedict = "^2.12.10"
 pyarrow = "^17.0.0"
-nptyping = "^2.5.0"
 polars = ">= 0.18.0"
 pandas = "^2.1.3"
 

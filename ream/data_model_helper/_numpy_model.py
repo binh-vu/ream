@@ -28,10 +28,6 @@ import orjson
 import pyarrow as pa
 import pyarrow.parquet as pq
 import serde.json
-from nptyping import NDArray, Shape
-from nptyping.ndarray import NDArrayMeta  # type: ignore
-from nptyping.shape_expression import get_dimensions  # type: ignore
-from nptyping.typing_ import Bool, Int32, Number
 from ream.data_model_helper._batch_file_manager import BatchFileManager, VirtualDir
 from ream.data_model_helper._container import DataSerdeMixin
 from ream.data_model_helper._index import Index, OffsetIndex
@@ -110,19 +106,10 @@ class NumpyDataModel(DataSerdeMixin):
                     )
 
                 ann = anns[name]
-                if ann is np.ndarray or isinstance(ann, NDArrayMeta):
+                if ann is np.ndarray:
                     # it it a numpy array
                     array_prop_idxs.append(i)
                     array_props.append(name)
-                    if isinstance(ann, NDArrayMeta):
-                        shp = ann.__args__[0]
-                        dims = get_dimensions(shp.__args__[0])
-                        if len(dims) == 2:
-                            array2d_props.append(name)
-                        elif len(dims) != 1:
-                            raise TypeError(
-                                "Do not support more than 2-dimension array"
-                            )
                 else:
                     ann_origin = get_origin(ann) or ann
                     if issubclass(ann_origin, (dict, list, Index)):
@@ -898,9 +885,9 @@ class NumpyDataModelHelper:
 class SingleNumpyArray(NumpyDataModel):
     __slots__ = ["value"]
 
-    value: NDArray[Shape["*"], Any]
+    value: np.ndarray
 
-    def __init__(self, value: NDArray[Shape["*"], Any]):
+    def __init__(self, value: np.ndarray):
         self.value = value
 
     def __getitem__(self, idx: int | slice):
@@ -913,9 +900,9 @@ class EncodedSingleNumpyArray(NumpyDataModel):
     __slots__ = ["decoder", "value"]
 
     decoder: list[str]
-    value: NDArray[Shape["*"], Int32]
+    value: np.ndarray
 
-    def __init__(self, decoder: list[str], value: NDArray[Shape["*"], Int32]):
+    def __init__(self, decoder: list[str], value: np.ndarray):
         self.decoder = decoder
         self.value = value
 
@@ -960,9 +947,9 @@ class EncodedSingleNumpyArray(NumpyDataModel):
 class Single2DNumpyArray(NumpyDataModel):
     __slots__ = ["value"]
 
-    value: NDArray[Shape["*,*"], Any]
+    value: np.ndarray
 
-    def __init__(self, value: NDArray[Shape["*,*"], Any]):
+    def __init__(self, value: np.ndarray):
         self.value = value
 
     def __getitem__(self, idx: int | slice):
@@ -974,9 +961,9 @@ class Single2DNumpyArray(NumpyDataModel):
 class SingleNDNumpyArray(DataSerdeMixin):
     __slots__ = ["value"]
 
-    value: NDArray[Shape["*,*"], Any]
+    value: np.ndarray
 
-    def __init__(self, value: NDArray[Shape["*,*"], Any]):
+    def __init__(self, value: np.ndarray):
         self.value = value
 
     def __getitem__(self, idx: int | slice):
@@ -1011,15 +998,13 @@ class SingleLevelIndexedNumpyArray(NumpyDataModel):
     __slots__ = ["index", "value"]
 
     index: dict[str, tuple[int, int]]
-    value: NDArray[Shape["*"], Any]
+    value: np.ndarray
 
-    def __init__(
-        self, index: dict[str, tuple[int, int]], value: NDArray[Shape["*"], Any]
-    ):
+    def __init__(self, index: dict[str, tuple[int, int]], value: np.ndarray):
         self.index = index
         self.value = value
 
-    def get_array(self, key: str) -> NDArray[Shape["*"], Any]:
+    def get_array(self, key: str) -> np.ndarray:
         start, end = self.index[key]
         return self.value[start:end]
 
@@ -1028,14 +1013,14 @@ class EncodedSingleMasked2DNumpyArray(NumpyDataModel):
     __slots__ = ["decoder", "value", "mask"]
 
     decoder: list[str]
-    value: NDArray[Shape["*,*"], Int32]
-    mask: NDArray[Shape["*,*"], Bool]
+    value: np.ndarray
+    mask: np.ndarray
 
     def __init__(
         self,
         decoder: list[str],
-        value: NDArray[Shape["*,*"], Int32],
-        mask: NDArray[Shape["*,*"], Bool],
+        value: np.ndarray,
+        mask: np.ndarray,
     ):
         self.decoder = decoder
         self.value = value
@@ -1065,12 +1050,12 @@ class EncodedSingleMasked2DNumpyArray(NumpyDataModel):
 class DictNumpyArray(NumpyDataModel):
     __slots__ = ["value"]
 
-    value: dict[str, NDArray[Shape["*"], Any]]
+    value: dict[str, np.ndarray]
 
-    def __init__(self, value: dict[str, NDArray[Shape["*"], Any]]):
+    def __init__(self, value: dict[str, np.ndarray]):
         self.value = value
 
-    def __getitem__(self, item: str) -> NDArray[Shape["*"], Any]:
+    def __getitem__(self, item: str) -> np.ndarray:
         return self.value[item]
 
     def save(

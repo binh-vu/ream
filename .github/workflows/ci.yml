@@ -26,7 +26,7 @@ jobs:
       - name: build wheels
         run: poetry build
       - name: upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: wheels
           path: dist
